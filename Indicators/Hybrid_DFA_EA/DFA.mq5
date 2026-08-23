@@ -24,8 +24,8 @@
 #property indicator_levelstyle STYLE_DOT
 
 //--- 入力パラメータ
-input group "=== DFA 設定 ===" input int InpDfaWindowSize =
-    300;                     // DFA 計算対象バー数 (N)
+//--- DFA 設定
+input int InpDfaWindowSize = 300;                     // DFA 計算対象バー数 (N)
 input int InpMinBoxSize = 4; // 最小ボックスサイズ (s_min)
 input int InpMaxBoxSize = 0; // 最大ボックスサイズ (0: N/4 自動設定)
 

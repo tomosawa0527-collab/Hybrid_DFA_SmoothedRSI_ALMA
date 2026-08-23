@@ -24,9 +24,8 @@
 #property indicator_width2 2
 
 //--- 入力パラメータ
-input group
-    "=== トレンド戦略 (Dual ALMA) 設定 ===" input int InpAlmaFastWindow =
-        9;                         // 短期 ALMA 窓幅 (Fast Window)
+//--- トレンド戦略 (Dual ALMA) 設定
+input int InpAlmaFastWindow = 9;                         // 短期 ALMA 窓幅 (Fast Window)
 input int InpAlmaSlowWindow = 21;  // 長期 ALMA 窓幅 (Slow Window)
 input double InpAlmaOffset = 0.85; // ALMA Offset (重心シフト 0.0〜1.0)
 input double InpAlmaSigma = 6.0;   // ALMA Sigma (ガウス幅)
