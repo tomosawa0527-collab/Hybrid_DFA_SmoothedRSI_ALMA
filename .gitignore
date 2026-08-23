@@ -1,0 +1,10 @@
+# MetaTrader compiled binaries
+*.ex5
+*.ex4
+
+# Log files
+*.log
+
+# Editor & clangd caches
+.cache/
+.mql-auto-forwards/
