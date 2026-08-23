@@ -137,16 +137,19 @@ int OnInit() {
 //| 終了処理関数                                                     |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
-    if (h_dfa != INVALID_HANDLE)
-        IndicatorRelease(h_dfa);
-    if (h_smoothedRsi != INVALID_HANDLE)
-        IndicatorRelease(h_smoothedRsi);
-    if (h_dualAlma != INVALID_HANDLE)
-        IndicatorRelease(h_dualAlma);
-    if (h_atr != INVALID_HANDLE)
-        IndicatorRelease(h_atr);
+    // バックテスト時はインジケータハンドルを解放しない（テスト完了後のチャート上にインジケータ表示を残すため）
+    if (!MQLInfoInteger(MQL_TESTER)) {
+        if (h_dfa != INVALID_HANDLE)
+            IndicatorRelease(h_dfa);
+        if (h_smoothedRsi != INVALID_HANDLE)
+            IndicatorRelease(h_smoothedRsi);
+        if (h_dualAlma != INVALID_HANDLE)
+            IndicatorRelease(h_dualAlma);
+        if (h_atr != INVALID_HANDLE)
+            IndicatorRelease(h_atr);
+    }
 
-    Print("[Hybrid_DFA_EA] ハンドルを解放し、終了しました。理由コード: ", reason);
+    Print("[Hybrid_DFA_EA] 終了処理完了。理由コード: ", reason);
 }
 
 //+------------------------------------------------------------------+
