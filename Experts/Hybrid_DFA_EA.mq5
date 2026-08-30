@@ -89,7 +89,22 @@ int OnInit() {
     PrintFormat("[Hybrid_DFA_EA] チャート時間軸: %s | DFA計算時間軸: %s | ATR計算時間軸: %s",
                 EnumToString(_Period), EnumToString(m_dfaTf), EnumToString(m_atrTf));
 
-    // 1. Smoothed RSI インディケータハンドル取得 (チャート足: サブウィンドウ)
+    // 1. DFA インディケータハンドル取得 (チャート足上で上位足算出: サブウィンドウ1)
+    if (InpUseDfa) {
+        h_dfa = iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DFA", m_dfaTf, InpDfaWindowSize, 8, 0,
+                        InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh);
+        if (h_dfa == INVALID_HANDLE) {
+            // パスプレフィックス付きでフォールバック
+            h_dfa = iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DFA", m_dfaTf, InpDfaWindowSize, 8, 0,
+                            InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh);
+        }
+        if (h_dfa == INVALID_HANDLE) {
+            Print("[Hybrid_DFA_EA] DFA インディケータのハンドル取得に失敗しました。");
+            return INIT_FAILED;
+        }
+    }
+
+    // 2. Smoothed RSI インディケータハンドル取得 (チャート足: サブウィンドウ2)
     if (InpUseRangeStrategy) {
         h_smoothedRsi =
             iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\SmoothedRSI", InpSSPeriod, InpRsiPeriod,
@@ -106,7 +121,7 @@ int OnInit() {
         }
     }
 
-    // 2. Dual ALMA インディケータハンドル取得 (チャート足: メインウィンドウ)
+    // 3. Dual ALMA インディケータハンドル取得 (チャート足: メインウィンドウ)
     if (InpUseTrendStrategy) {
         h_dualAlma =
             iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DualALMA", InpAlmaFastWindow,
@@ -119,21 +134,6 @@ int OnInit() {
         if (h_dualAlma == INVALID_HANDLE) {
             Print("[Hybrid_DFA_EA] DualALMA "
                   "インディケータのハンドル取得に失敗しました。");
-            return INIT_FAILED;
-        }
-    }
-
-    // 3. DFA インディケータハンドル取得 (上位足)
-    if (InpUseDfa) {
-        h_dfa = iCustom(_Symbol, m_dfaTf, "Hybrid_DFA_EA\\DFA", InpDfaWindowSize, 8, 0, InpDfaSmoothPeriod,
-                        InpDfaThresholdLow, InpDfaThresholdHigh);
-        if (h_dfa == INVALID_HANDLE) {
-            // パスプレフィックス付きでフォールバック
-            h_dfa = iCustom(_Symbol, m_dfaTf, "Indicators\\Hybrid_DFA_EA\\DFA", InpDfaWindowSize, 8, 0,
-                            InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh);
-        }
-        if (h_dfa == INVALID_HANDLE) {
-            Print("[Hybrid_DFA_EA] DFA インディケータのハンドル取得に失敗しました。");
             return INIT_FAILED;
         }
     }
