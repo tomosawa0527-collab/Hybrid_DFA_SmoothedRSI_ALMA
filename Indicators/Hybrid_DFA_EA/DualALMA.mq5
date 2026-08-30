@@ -42,7 +42,7 @@ double wSlow[];
 double sumWSlow;
 
 //+------------------------------------------------------------------+
-//| ALMA の加重係数を事前計算                                        |
+//| ALMA の加重係数を事前計算 (k=0 が最新バー、k=window-1 が最古バー) |
 //+------------------------------------------------------------------+
 bool CalculateWeights(const int window, const double offset, const double sigma,
                       double &weights[], double &sumWeight) {
@@ -52,14 +52,16 @@ bool CalculateWeights(const int window, const double offset, const double sigma,
   ArrayResize(weights, window);
   sumWeight = 0.0;
 
-  double m = offset * (double)(window - 1);
+  // 重心位置 m (0=最新バー, window-1=最古バー)
+  // offset=0.85 の場合、最新バー寄りの (1.0 - 0.85) * (window - 1) に重心を配置
+  double m = (1.0 - offset) * (double)(window - 1);
   double s = (double)window / sigma;
   double two_s_sq = 2.0 * s * s;
 
-  for (int i = 0; i < window; i++) {
-    double diff = (double)i - m;
-    weights[i] = MathExp(-(diff * diff) / two_s_sq);
-    sumWeight += weights[i];
+  for (int k = 0; k < window; k++) {
+    double diff = (double)k - m;
+    weights[k] = MathExp(-(diff * diff) / two_s_sq);
+    sumWeight += weights[k];
   }
 
   return (sumWeight > 0.0);
@@ -69,11 +71,15 @@ bool CalculateWeights(const int window, const double offset, const double sigma,
 //| カスタムインディケータ初期化関数                                 |
 //+------------------------------------------------------------------+
 int OnInit() {
+  // 標準インジケータバッファ (0=最古, rates_total-1=最新)
   SetIndexBuffer(0, AlmaFastBuffer, INDICATOR_DATA);
   SetIndexBuffer(1, AlmaSlowBuffer, INDICATOR_DATA);
 
-  ArraySetAsSeries(AlmaFastBuffer, true);
-  ArraySetAsSeries(AlmaSlowBuffer, true);
+  ArraySetAsSeries(AlmaFastBuffer, false);
+  ArraySetAsSeries(AlmaSlowBuffer, false);
+
+  PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+  PlotIndexSetDouble(1, PLOT_EMPTY_VALUE, EMPTY_VALUE);
 
   IndicatorSetString(INDICATOR_SHORTNAME,
                      StringFormat("DualALMA(Fast=%d, Slow=%d)",
@@ -99,7 +105,7 @@ int OnInit() {
 }
 
 //+------------------------------------------------------------------+
-//| 適用価格の取得ヘルパー                                           |
+//| 適用価格の取得ヘルパー (index は 0=最古, rates_total-1=最新)     |
 //+------------------------------------------------------------------+
 double GetPrice(const int index, const double &open[], const double &high[],
                 const double &low[], const double &close[]) {
@@ -134,47 +140,39 @@ int OnCalculate(const int rates_total, const int prev_calculated,
     return 0;
   }
 
-  // 入力価格系列を時系列配列 (0=最新) として作成
-  double price[];
-  ArraySetAsSeries(price, true);
-  ArrayResize(price, rates_total);
-  for (int i = 0; i < rates_total; i++) {
-    int srcIdx = rates_total - 1 - i;
-    price[i] = GetPrice(srcIdx, open, high, low, close);
-  }
+  // 入力配列を標準順序 (0=最古, rates_total-1=最新) に統一
+  ArraySetAsSeries(open, false);
+  ArraySetAsSeries(high, false);
+  ArraySetAsSeries(low, false);
+  ArraySetAsSeries(close, false);
 
-  int limit;
-  if (prev_calculated == 0) {
-    limit = rates_total - InpAlmaSlowWindow;
-    for (int i = rates_total - 1; i > limit; i--) {
-      AlmaFastBuffer[i] = price[i];
-      AlmaSlowBuffer[i] = price[i];
+  int start = prev_calculated - 1;
+  if (start < InpAlmaSlowWindow - 1) {
+    start = InpAlmaSlowWindow - 1;
+    for (int i = 0; i < start; i++) {
+      AlmaFastBuffer[i] = EMPTY_VALUE;
+      AlmaSlowBuffer[i] = EMPTY_VALUE;
     }
-  } else {
-    limit = rates_total - prev_calculated + 1;
   }
 
-  if (limit > rates_total - InpAlmaSlowWindow) {
-    limit = rates_total - InpAlmaSlowWindow;
-  }
-
-  // ALMA 計算 (0=最新バー, i は shift)
-  for (int i = limit; i >= 0; i--) {
+  // ALMA 計算 (i は 0=最古 から rates_total-1=最新 へ進む)
+  for (int i = start; i < rates_total; i++) {
     // Fast ALMA
     double fastSum = 0.0;
     for (int k = 0; k < InpAlmaFastWindow; k++) {
-      fastSum += price[i + k] * wFast[k];
+      fastSum += GetPrice(i - k, open, high, low, close) * wFast[k];
     }
     AlmaFastBuffer[i] = fastSum / sumWFast;
 
     // Slow ALMA
     double slowSum = 0.0;
     for (int k = 0; k < InpAlmaSlowWindow; k++) {
-      slowSum += price[i + k] * wSlow[k];
+      slowSum += GetPrice(i - k, open, high, low, close) * wSlow[k];
     }
     AlmaSlowBuffer[i] = slowSum / sumWSlow;
   }
 
   return rates_total;
 }
+//+------------------------------------------------------------------+
 //+------------------------------------------------------------------+

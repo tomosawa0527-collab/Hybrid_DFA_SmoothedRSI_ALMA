@@ -23,6 +23,7 @@ input ulong InpSlippage = 10;                                               // �
 //--- DFA レジーム判定設定
 input group "=== DFA (レジーム判定) 設定 ===" input bool InpUseDfa = true; // DFA レジーム判定を有効化
 input int InpDfaWindowSize = 300;                                          // DFAの計算対象バー数
+input int InpDfaSmoothPeriod = 5;                                          // DFA平滑化期間 (1で平滑化なし)
 input double InpDfaThresholdLow = 0.45;                                    // レンジ判定閾値 (これ未満でレンジ)
 input double InpDfaThresholdHigh = 0.55;                                   // トレンド判定閾値 (これ超過でトレンド)
 
@@ -74,11 +75,12 @@ int OnInit() {
 
     // 1. DFA インディケータハンドル取得
     if (InpUseDfa) {
-        h_dfa = iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DFA", InpDfaWindowSize, 4, 0);
+        h_dfa = iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DFA", InpDfaWindowSize, 8, 0, InpDfaSmoothPeriod,
+                        InpDfaThresholdLow, InpDfaThresholdHigh);
         if (h_dfa == INVALID_HANDLE) {
             // パスプレフィックス付きでフォールバック
-            h_dfa =
-                iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DFA", InpDfaWindowSize, 4, 0);
+            h_dfa = iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DFA", InpDfaWindowSize, 8, 0,
+                            InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh);
         }
         if (h_dfa == INVALID_HANDLE) {
             Print("[Hybrid_DFA_EA] DFA インディケータのハンドル取得に失敗しました。");
@@ -232,6 +234,14 @@ bool UpdateSystemState(SSystemState& state) {
         }
     }
 
+    static bool isFirstUpdate = true;
+    if (isFirstUpdate) {
+        isFirstUpdate = false;
+        string regStr = (state.regime == REGIME_RANGE ? "RANGE" : (state.regime == REGIME_TREND ? "TREND" : "TRANSITION"));
+        PrintFormat("[Hybrid_DFA_EA] 初回状態取得成功: DFA Alpha=%.4f (Regime=%s), RSI[1]=%.2f, ALMA Fast[1]=%.5f Slow[1]=%.5f",
+                    state.alpha, regStr, state.smoothed_rsi_1, state.alma_fast_1, state.alma_slow_1);
+    }
+
     return true;
 }
 
@@ -368,19 +378,31 @@ void OnTick() {
     bool allowTrend =
         InpUseTrendStrategy && (!InpUseDfa || state.regime == REGIME_TREND);
 
-    // A. レンジ戦略シグナル (Super Smoother + RSI)
+    // A. レンジ戦略シグナル (Super Smoother + RSI) - ゾーン復帰・脱出クロス方式
     if (allowRange) {
-        // BUY: RSI[1] < Oversold && RSI[1] > RSI[2] (反転上昇)
-        if (state.smoothed_rsi_1 < InpRsiOversold &&
-            state.smoothed_rsi_1 > state.smoothed_rsi_2) {
+        // BUY: RSI[2] <= Oversold && RSI[1] > Oversold (売られすぎゾーンから反転上昇脱出)
+        if (state.smoothed_rsi_2 <= InpRsiOversold &&
+            state.smoothed_rsi_1 > InpRsiOversold) {
+            if (rangeSells > 0) {
+                ClosePositionsByStrategy(STRATEGY_RANGE);
+                rangeSells = 0;
+            }
             if (rangeBuys == 0) {
+                PrintFormat("[Hybrid_DFA_EA] レンジBUYシグナル検知: Alpha=%.4f (Low=%.2f), RSI[2]=%.2f, RSI[1]=%.2f",
+                            state.alpha, InpDfaThresholdLow, state.smoothed_rsi_2, state.smoothed_rsi_1);
                 ExecuteOrder(ORDER_TYPE_BUY, STRATEGY_RANGE, state.atr);
             }
         }
-        // SELL: RSI[1] > Overbought && RSI[1] < RSI[2] (反転下落)
-        else if (state.smoothed_rsi_1 > InpRsiOverbought &&
-                 state.smoothed_rsi_1 < state.smoothed_rsi_2) {
+        // SELL: RSI[2] >= Overbought && RSI[1] < Overbought (買われすぎゾーンから反転下落脱出)
+        else if (state.smoothed_rsi_2 >= InpRsiOverbought &&
+                 state.smoothed_rsi_1 < InpRsiOverbought) {
+            if (rangeBuys > 0) {
+                ClosePositionsByStrategy(STRATEGY_RANGE);
+                rangeBuys = 0;
+            }
             if (rangeSells == 0) {
+                PrintFormat("[Hybrid_DFA_EA] レンジSELLシグナル検知: Alpha=%.4f (Low=%.2f), RSI[2]=%.2f, RSI[1]=%.2f",
+                            state.alpha, InpDfaThresholdLow, state.smoothed_rsi_2, state.smoothed_rsi_1);
                 ExecuteOrder(ORDER_TYPE_SELL, STRATEGY_RANGE, state.atr);
             }
         }
@@ -391,14 +413,26 @@ void OnTick() {
         // BUY (ゴールデンクロス): Fast[2] <= Slow[2] && Fast[1] > Slow[1]
         if (state.alma_fast_2 <= state.alma_slow_2 &&
             state.alma_fast_1 > state.alma_slow_1) {
+            if (trendSells > 0) {
+                ClosePositionsByStrategy(STRATEGY_TREND);
+                trendSells = 0;
+            }
             if (trendBuys == 0) {
+                PrintFormat("[Hybrid_DFA_EA] トレンドBUYシグナル検知: Alpha=%.4f (High=%.2f), Fast[1]=%.3f, Slow[1]=%.3f",
+                            state.alpha, InpDfaThresholdHigh, state.alma_fast_1, state.alma_slow_1);
                 ExecuteOrder(ORDER_TYPE_BUY, STRATEGY_TREND, state.atr);
             }
         }
         // SELL (デッドクロス): Fast[2] >= Slow[2] && Fast[1] < Slow[1]
         else if (state.alma_fast_2 >= state.alma_slow_2 &&
                  state.alma_fast_1 < state.alma_slow_1) {
+            if (trendBuys > 0) {
+                ClosePositionsByStrategy(STRATEGY_TREND);
+                trendBuys = 0;
+            }
             if (trendSells == 0) {
+                PrintFormat("[Hybrid_DFA_EA] トレンドSELLシグナル検知: Alpha=%.4f (High=%.2f), Fast[1]=%.3f, Slow[1]=%.3f",
+                            state.alpha, InpDfaThresholdHigh, state.alma_fast_1, state.alma_slow_1);
                 ExecuteOrder(ORDER_TYPE_SELL, STRATEGY_TREND, state.atr);
             }
         }

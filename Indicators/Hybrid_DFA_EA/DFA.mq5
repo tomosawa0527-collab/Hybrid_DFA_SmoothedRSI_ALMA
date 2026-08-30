@@ -7,44 +7,91 @@
 #property link "https://www.mql5.com"
 #property version "1.00"
 #property indicator_separate_window
-#property indicator_buffers 1
+#property indicator_buffers 3
 #property indicator_plots 1
 
-//--- プロット定義
+//--- プロット定義 (カラーライン: 0=レンジ(赤), 1=中立(グレー), 2=トレンド(青))
 #property indicator_label1 "DFA Alpha"
-#property indicator_type1 DRAW_LINE
-#property indicator_color1 clrDodgerBlue
+#property indicator_type1 DRAW_COLOR_LINE
+#property indicator_color1 clrCrimson, clrGray, clrDodgerBlue
 #property indicator_style1 STYLE_SOLID
 #property indicator_width1 2
-
-//--- レベル設定
-#property indicator_level1 0.45
-#property indicator_level2 0.55
-#property indicator_levelcolor clrSilver
-#property indicator_levelstyle STYLE_DOT
 
 //--- 入力パラメータ
 //--- DFA 設定
 input int InpDfaWindowSize = 300;                     // DFA 計算対象バー数 (N)
-input int InpMinBoxSize = 4; // 最小ボックスサイズ (s_min)
-input int InpMaxBoxSize = 0; // 最大ボックスサイズ (0: N/4 自動設定)
+input int InpMinBoxSize = 8;                          // 最小ボックスサイズ (s_min)
+input int InpMaxBoxSize = 0;                          // 最大ボックスサイズ (0: N/4 自動設定)
+input int InpSmoothPeriod = 5;                        // 平滑化期間 (1: 平滑化なし, 2以上: 低遅延平滑化)
+input double InpDfaThresholdLow = 0.45;               // レンジ判定閾値 (これ未満でレンジ)
+input double InpDfaThresholdHigh = 0.55;              // トレンド判定閾値 (これ超過でトレンド)
+input double InpScaleMargin = 0.05;                   // 縮尺マージン (Low-Margin 〜 High+Margin)
 
 //--- バッファ
 double AlphaBuffer[];
+double AlphaColors[];
+double RawAlphaBuffer[];
+
+//--- 平滑化係数
+double ssC1, ssC2, ssC3;
 
 //+------------------------------------------------------------------+
 //| カスタムインディケータ初期化関数                                 |
 //+------------------------------------------------------------------+
 int OnInit() {
   SetIndexBuffer(0, AlphaBuffer, INDICATOR_DATA);
-  ArraySetAsSeries(AlphaBuffer, true);
+  SetIndexBuffer(1, AlphaColors, INDICATOR_COLOR_INDEX);
+  SetIndexBuffer(2, RawAlphaBuffer, INDICATOR_CALCULATIONS);
+
+  ArraySetAsSeries(AlphaBuffer, false);
+  ArraySetAsSeries(AlphaColors, false);
+  ArraySetAsSeries(RawAlphaBuffer, false);
+
+  PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+  PlotIndexSetInteger(0, PLOT_DRAW_BEGIN, InpDfaWindowSize);
+
+  // 縮尺を (InpDfaThresholdLow - InpScaleMargin) 〜 (InpDfaThresholdHigh + InpScaleMargin) で固定
+  double scaleMin = InpDfaThresholdLow - InpScaleMargin;
+  double scaleMax = InpDfaThresholdHigh + InpScaleMargin;
+  if (scaleMin < 0.0) scaleMin = 0.0;
+  if (scaleMax > 1.0) scaleMax = 1.0;
+
+  IndicatorSetDouble(INDICATOR_MINIMUM, scaleMin);
+  IndicatorSetDouble(INDICATOR_MAXIMUM, scaleMax);
+
+  // 動的レベルラインの設定 (Low, 0.5基準線, High)
+  IndicatorSetInteger(INDICATOR_LEVELS, 3);
+  IndicatorSetDouble(INDICATOR_LEVELVALUE, 0, InpDfaThresholdLow);
+  IndicatorSetDouble(INDICATOR_LEVELVALUE, 1, 0.50);
+  IndicatorSetDouble(INDICATOR_LEVELVALUE, 2, InpDfaThresholdHigh);
+
+  IndicatorSetInteger(INDICATOR_LEVELSTYLE, 0, STYLE_DOT);
+  IndicatorSetInteger(INDICATOR_LEVELSTYLE, 1, STYLE_DASHDOT);
+  IndicatorSetInteger(INDICATOR_LEVELSTYLE, 2, STYLE_DOT);
+
+  IndicatorSetInteger(INDICATOR_LEVELCOLOR, 0, clrSilver);
+  IndicatorSetInteger(INDICATOR_LEVELCOLOR, 1, clrGray);
+  IndicatorSetInteger(INDICATOR_LEVELCOLOR, 2, clrSilver);
 
   IndicatorSetString(INDICATOR_SHORTNAME,
-                     StringFormat("DFA(N=%d)", InpDfaWindowSize));
+                     StringFormat("DFA(N=%d, Smooth=%d, Low=%.2f, High=%.2f)",
+                                  InpDfaWindowSize, InpSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh));
   IndicatorSetInteger(INDICATOR_DIGITS, 4);
 
+  // Super Smoother 平滑化係数の計算
+  if (InpSmoothPeriod > 1) {
+    double a = MathExp(-1.41421356 * M_PI / (double)InpSmoothPeriod);
+    double b = 2.0 * a * MathCos(1.41421356 * M_PI / (double)InpSmoothPeriod);
+    ssC2 = b;
+    ssC3 = -a * a;
+    ssC1 = 1.0 - ssC2 - ssC3;
+  }
+
+  PrintFormat("[DFA] OnInit 実行: InpDfaWindowSize=%d, InpMinBoxSize=%d, InpMaxBoxSize=%d, InpSmoothPeriod=%d",
+              InpDfaWindowSize, InpMinBoxSize, InpMaxBoxSize, InpSmoothPeriod);
+
   if (InpDfaWindowSize < 30) {
-    Print("[DFA] エラー: InpDfaWindowSize が小さすぎます (最低30必要)。");
+    Print("[DFA] エラー: インプットパラメータが不正です。");
     return INIT_PARAMETERS_INCORRECT;
   }
 
@@ -77,28 +124,29 @@ bool LinearRegression(const double &x[], const double &y[], const int count,
 }
 
 //+------------------------------------------------------------------+
-//| 1つのバー位置におけるDFA スケーリング指数 Alpha の計算           |
+//| 1つのバー位置 (barIdx は 0=最古, rates_total-1=最新) でのDFA計算  |
 //+------------------------------------------------------------------+
-double CalculateDfaAlphaAtBar(const double &close[], const int shift,
+double CalculateDfaAlphaAtBar(const double &close[], const int barIdx,
                               const int rates_total) {
   int N = InpDfaWindowSize;
-  if (shift + N >= rates_total) {
-    return 0.5; // データ不足時はデフォルト（ランダムウォーク）
+  if (barIdx < N) {
+    return 0.5; // データ不足時はデフォルト
   }
 
-  // 1. 対数リターンの計算と平均
+  // 1. 対数リターンの計算と平均 (過去から現在へ)
   int returnCount = N - 1;
   double returns[];
   ArrayResize(returns, returnCount);
 
   double sumReturn = 0.0;
+  int startPos = barIdx - N + 1;
   for (int i = 0; i < returnCount; i++) {
-    int currentIdx = shift + i;
-    int nextIdx = shift + i + 1;
-    if (close[nextIdx] <= 0.0 || close[currentIdx] <= 0.0) {
+    int prevPos = startPos + i;
+    int currPos = startPos + i + 1;
+    if (close[prevPos] <= 0.0 || close[currPos] <= 0.0) {
       returns[i] = 0.0;
     } else {
-      returns[i] = MathLog(close[currentIdx] / close[nextIdx]);
+      returns[i] = MathLog(close[currPos] / close[prevPos]);
     }
     sumReturn += returns[i];
   }
@@ -108,11 +156,8 @@ double CalculateDfaAlphaAtBar(const double &close[], const int shift,
   double Y[];
   ArrayResize(Y, returnCount);
   double cumSum = 0.0;
-  // returns は shift (最新) から過去に向かって格納されているため、
-  // 累積和は過去 (returnCount-1) から現在 (0) へ積算
   for (int i = 0; i < returnCount; i++) {
-    int rIdx = returnCount - 1 - i;
-    cumSum += (returns[rIdx] - meanReturn);
+    cumSum += (returns[i] - meanReturn);
     Y[i] = cumSum;
   }
 
@@ -122,8 +167,8 @@ double CalculateDfaAlphaAtBar(const double &close[], const int shift,
   if (sMax <= sMin)
     sMax = sMin + 2;
 
-  // 対数等間隔でスケール s を決定 (10〜16スケール)
-  int numScales = 12;
+  // 対数等間隔でスケール s を決定 (16スケール)
+  int numScales = 16;
   double logMin = MathLog(sMin);
   double logMax = MathLog(sMax);
   double step = (logMax - logMin) / (numScales - 1);
@@ -136,6 +181,14 @@ double CalculateDfaAlphaAtBar(const double &close[], const int shift,
   int validScales = 0;
   int lastS = -1;
 
+  double blockX[];
+  double blockY[];
+  ArrayResize(blockX, sMax);
+  ArrayResize(blockY, sMax);
+  for (int j = 0; j < sMax; j++) {
+    blockX[j] = j;
+  }
+
   for (int k = 0; k < numScales; k++) {
     int s = (int)MathRound(MathExp(logMin + k * step));
     if (s == lastS || s < sMin || s > sMax)
@@ -147,18 +200,20 @@ double CalculateDfaAlphaAtBar(const double &close[], const int shift,
       continue;
 
     double sumSquaredResiduals = 0.0;
-    int totalPoints = numBlocks * s;
+    int totalBlocks = 2 * numBlocks;
+    int totalPoints = totalBlocks * s;
 
-    // 各ブロック内で1次線形フィッティングを行って残差二乗和を積算
-    for (int b = 0; b < numBlocks; b++) {
-      int blockStart = b * s;
-      double blockX[];
-      double blockY[];
-      ArrayResize(blockX, s);
-      ArrayResize(blockY, s);
+    for (int b = 0; b < totalBlocks; b++) {
+      int blockStart;
+      if (b < numBlocks) {
+        // 順方向 (先頭から)
+        blockStart = b * s;
+      } else {
+        // 逆方向 (末尾から端数を取り込む)
+        blockStart = returnCount - (b - numBlocks + 1) * s;
+      }
 
       for (int j = 0; j < s; j++) {
-        blockX[j] = j;
         blockY[j] = Y[blockStart + j];
       }
 
@@ -194,7 +249,7 @@ double CalculateDfaAlphaAtBar(const double &close[], const int shift,
 }
 
 //+------------------------------------------------------------------+
-//| カスタムインディケータ計算関数                                   |
+//| カスタムインディケータ計算関数 (0=最古, rates_total-1=最新)      |
 //+------------------------------------------------------------------+
 int OnCalculate(const int rates_total, const int prev_calculated,
                 const datetime &time[], const double &open[],
@@ -205,30 +260,56 @@ int OnCalculate(const int rates_total, const int prev_calculated,
     return 0;
   }
 
-  // close を時系列配列 (0=最新) に設定
-  double closeSeries[];
-  ArraySetAsSeries(closeSeries, true);
-  ArrayResize(closeSeries, rates_total);
-  for (int i = 0; i < rates_total; i++) {
-    closeSeries[i] = close[rates_total - 1 - i];
+  ArraySetAsSeries(close, false);
+
+  int start = prev_calculated - 1;
+  if (start < InpDfaWindowSize) {
+    start = InpDfaWindowSize;
+    for (int i = 0; i < start; i++) {
+      RawAlphaBuffer[i] = EMPTY_VALUE;
+      AlphaBuffer[i] = EMPTY_VALUE;
+      AlphaColors[i] = 1.0;
+    }
   }
 
-  int limit;
-  if (prev_calculated == 0) {
-    // 初回計算: 過去バーを計算（負荷軽減のため最大1000本まで）
-    limit = MathMin(rates_total - InpDfaWindowSize - 1, 1000);
-    for (int i = rates_total - 1; i > limit; i--) {
-      AlphaBuffer[i] = 0.5;
+  // 1. 生の DFA Alpha を計算 (i は 0=最古 から rates_total-1=最新 へ進む)
+  for (int i = start; i < rates_total; i++) {
+    RawAlphaBuffer[i] = CalculateDfaAlphaAtBar(close, i, rates_total);
+  }
+
+  // 2. 平滑化の適用 (過去から最新へ SuperSmoother フィルタを通す)
+  if (InpSmoothPeriod > 1) {
+    int ssStart = start;
+    if (ssStart < InpDfaWindowSize + 2) {
+      ssStart = InpDfaWindowSize + 2;
+      AlphaBuffer[InpDfaWindowSize] = RawAlphaBuffer[InpDfaWindowSize];
+      AlphaBuffer[InpDfaWindowSize + 1] = RawAlphaBuffer[InpDfaWindowSize + 1];
+    }
+    for (int i = ssStart; i < rates_total; i++) {
+      AlphaBuffer[i] = ssC1 * (RawAlphaBuffer[i] + RawAlphaBuffer[i - 1]) * 0.5 +
+                       ssC2 * AlphaBuffer[i - 1] +
+                       ssC3 * AlphaBuffer[i - 2];
     }
   } else {
-    // 差分計算: 最新の確定バーおよび最新バー
-    limit = rates_total - prev_calculated + 1;
+    for (int i = start; i < rates_total; i++) {
+      AlphaBuffer[i] = RawAlphaBuffer[i];
+    }
   }
 
-  for (int i = limit; i >= 0; i--) {
-    AlphaBuffer[i] = CalculateDfaAlphaAtBar(closeSeries, i, rates_total);
+  // 3. レジーム色分けの設定 (0=レンジ:赤, 1=中立:グレー, 2=トレンド:青)
+  for (int i = start; i < rates_total; i++) {
+    if (AlphaBuffer[i] == EMPTY_VALUE) {
+      AlphaColors[i] = 1.0;
+    } else if (AlphaBuffer[i] < InpDfaThresholdLow) {
+      AlphaColors[i] = 0.0; // レンジ (赤)
+    } else if (AlphaBuffer[i] > InpDfaThresholdHigh) {
+      AlphaColors[i] = 2.0; // トレンド (青)
+    } else {
+      AlphaColors[i] = 1.0; // 中立・遷移 (グレー)
+    }
   }
 
   return rates_total;
 }
+//+------------------------------------------------------------------+
 //+------------------------------------------------------------------+

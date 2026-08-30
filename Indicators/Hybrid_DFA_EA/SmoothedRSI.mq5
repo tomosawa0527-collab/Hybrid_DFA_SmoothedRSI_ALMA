@@ -9,6 +9,8 @@
 #property indicator_separate_window
 #property indicator_buffers 4
 #property indicator_plots 1
+#property indicator_minimum 0.0
+#property indicator_maximum 100.0
 
 //--- プロット定義
 #property indicator_label1 "Smoothed RSI"
@@ -34,7 +36,7 @@ input ENUM_APPLIED_PRICE InpAppliedPrice = PRICE_CLOSE; // 適用価格
 
 //--- バッファ
 double SmoothedRsiBuffer[];
-double SuperSmootherBuffer[];
+double RawRsiBuffer[];
 double AvgGainBuffer[];
 double AvgLossBuffer[];
 
@@ -45,17 +47,19 @@ double c1, c2, c3;
 //| カスタムインディケータ初期化関数                                 |
 //+------------------------------------------------------------------+
 int OnInit() {
-    // バッファのバインディング
+    // バッファのバインディング (0=最古, rates_total-1=最新)
     SetIndexBuffer(0, SmoothedRsiBuffer, INDICATOR_DATA);
-    SetIndexBuffer(1, SuperSmootherBuffer, INDICATOR_CALCULATIONS);
+    SetIndexBuffer(1, RawRsiBuffer, INDICATOR_CALCULATIONS);
     SetIndexBuffer(2, AvgGainBuffer, INDICATOR_CALCULATIONS);
     SetIndexBuffer(3, AvgLossBuffer, INDICATOR_CALCULATIONS);
 
-    // 全バッファを時系列 (0=最新) に設定
-    ArraySetAsSeries(SmoothedRsiBuffer, true);
-    ArraySetAsSeries(SuperSmootherBuffer, true);
-    ArraySetAsSeries(AvgGainBuffer, true);
-    ArraySetAsSeries(AvgLossBuffer, true);
+    ArraySetAsSeries(SmoothedRsiBuffer, false);
+    ArraySetAsSeries(RawRsiBuffer, false);
+    ArraySetAsSeries(AvgGainBuffer, false);
+    ArraySetAsSeries(AvgLossBuffer, false);
+
+    PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+    PlotIndexSetInteger(0, PLOT_DRAW_BEGIN, InpSSPeriod + InpRsiPeriod);
 
     IndicatorSetString(
         INDICATOR_SHORTNAME,
@@ -113,64 +117,64 @@ int OnCalculate(const int rates_total, const int prev_calculated,
         return 0;
     }
 
-    // 入力価格系列を時系列配列として作成
-    double price[];
-    ArraySetAsSeries(price, true);
-    ArrayResize(price, rates_total);
-    for (int i = 0; i < rates_total; i++) {
-        int srcIdx = rates_total - 1 - i;
-        price[i] = GetPrice(srcIdx, open, high, low, close);
+    ArraySetAsSeries(open, false);
+    ArraySetAsSeries(high, false);
+    ArraySetAsSeries(low, false);
+    ArraySetAsSeries(close, false);
+
+    int start = prev_calculated - 1;
+    if (start < InpRsiPeriod) {
+        start = InpRsiPeriod;
+        // 初期化
+        for (int i = 0; i < start; i++) {
+            RawRsiBuffer[i] = 50.0;
+            SmoothedRsiBuffer[i] = 50.0;
+            AvgGainBuffer[i] = 0.0;
+            AvgLossBuffer[i] = 0.0;
+        }
+        // 初回シード
+        double sumGain = 0.0, sumLoss = 0.0;
+        for (int i = 1; i <= InpRsiPeriod; i++) {
+            double diff = GetPrice(i, open, high, low, close) - GetPrice(i - 1, open, high, low, close);
+            if (diff > 0.0) sumGain += diff;
+            else sumLoss += -diff;
+        }
+        AvgGainBuffer[InpRsiPeriod] = sumGain / (double)InpRsiPeriod;
+        AvgLossBuffer[InpRsiPeriod] = sumLoss / (double)InpRsiPeriod;
+        double total = AvgGainBuffer[InpRsiPeriod] + AvgLossBuffer[InpRsiPeriod];
+        RawRsiBuffer[InpRsiPeriod] = (total > 1e-12) ? (100.0 * AvgGainBuffer[InpRsiPeriod] / total) : 50.0;
+        SmoothedRsiBuffer[InpRsiPeriod] = RawRsiBuffer[InpRsiPeriod];
+        start = InpRsiPeriod + 1;
     }
 
-    int limit;
-    if (prev_calculated == 0) {
-        // 初回初期化
-        limit = rates_total - 3;
-        SuperSmootherBuffer[rates_total - 1] = price[rates_total - 1];
-        SuperSmootherBuffer[rates_total - 2] = price[rates_total - 2];
-        AvgGainBuffer[rates_total - 1] = 0.0;
-        AvgLossBuffer[rates_total - 1] = 0.0;
-        SmoothedRsiBuffer[rates_total - 1] = 50.0;
-        SmoothedRsiBuffer[rates_total - 2] = 50.0;
-    } else {
-        limit = rates_total - prev_calculated + 1;
-    }
-
-    if (limit >= rates_total - 2)
-        limit = rates_total - 3;
-
-    // 過去から現在へ向かって Super Smoother と RSI を順次計算
-    for (int i = limit; i >= 0; i--) {
-        // 1. Super Smoother 2-Pole 漸化式
-        // S_t = c1 * (P_t + P_{t-1}) / 2 + c2 * S_{t-1} + c3 * S_{t-2}
-        SuperSmootherBuffer[i] = c1 * (price[i] + price[i + 1]) * 0.5 +
-                                 c2 * SuperSmootherBuffer[i + 1] +
-                                 c3 * SuperSmootherBuffer[i + 2];
-
-        // 2. Smoothed RSI 計算
-        double diff = SuperSmootherBuffer[i] - SuperSmootherBuffer[i + 1];
+    // 1. 生の RSI 計算 (i は 0=最古 から rates_total-1=最新 へ進む)
+    for (int i = start; i < rates_total; i++) {
+        double diff = GetPrice(i, open, high, low, close) - GetPrice(i - 1, open, high, low, close);
         double gain = (diff > 0.0) ? diff : 0.0;
         double loss = (diff < 0.0) ? -diff : 0.0;
 
-        // 古いバーでの初期シード
-        if (i >= rates_total - InpSSPeriod - InpRsiPeriod) {
-            AvgGainBuffer[i] = gain;
-            AvgLossBuffer[i] = loss;
-            SmoothedRsiBuffer[i] = 50.0;
-        } else {
-            // Wilder's Exponential Smoothing
-            AvgGainBuffer[i] = (AvgGainBuffer[i + 1] * (InpRsiPeriod - 1) + gain) /
-                               (double)InpRsiPeriod;
-            AvgLossBuffer[i] = (AvgLossBuffer[i + 1] * (InpRsiPeriod - 1) + loss) /
-                               (double)InpRsiPeriod;
+        AvgGainBuffer[i] = (AvgGainBuffer[i - 1] * (InpRsiPeriod - 1) + gain) / (double)InpRsiPeriod;
+        AvgLossBuffer[i] = (AvgLossBuffer[i - 1] * (InpRsiPeriod - 1) + loss) / (double)InpRsiPeriod;
 
-            double total = AvgGainBuffer[i] + AvgLossBuffer[i];
-            if (total > 1e-12) {
-                SmoothedRsiBuffer[i] = 100.0 * (AvgGainBuffer[i] / total);
-            } else {
-                SmoothedRsiBuffer[i] = 50.0;
-            }
+        double total = AvgGainBuffer[i] + AvgLossBuffer[i];
+        if (total > 1e-12) {
+            RawRsiBuffer[i] = 100.0 * (AvgGainBuffer[i] / total);
+        } else {
+            RawRsiBuffer[i] = 50.0;
         }
+    }
+
+    // 2. Super Smoother 平滑化の適用 (RSI に対して平滑化フィルターを通す)
+    int ssStart = start;
+    if (ssStart < InpRsiPeriod + 2) {
+        ssStart = InpRsiPeriod + 2;
+        SmoothedRsiBuffer[InpRsiPeriod + 1] = RawRsiBuffer[InpRsiPeriod + 1];
+    }
+
+    for (int i = ssStart; i < rates_total; i++) {
+        SmoothedRsiBuffer[i] = c1 * (RawRsiBuffer[i] + RawRsiBuffer[i - 1]) * 0.5 +
+                               c2 * SmoothedRsiBuffer[i - 1] +
+                               c3 * SmoothedRsiBuffer[i - 2];
     }
 
     return rates_total;
