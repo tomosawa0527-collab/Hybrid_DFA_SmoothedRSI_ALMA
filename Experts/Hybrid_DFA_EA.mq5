@@ -21,31 +21,37 @@ input ulong InpMagicNumber = 20260823;                                      // �
 input ulong InpSlippage = 10;                                               // 許容スリッページ (points)
 
 //--- DFA レジーム判定設定
-input group "=== DFA (レジーム判定) 設定 ===" input bool InpUseDfa = true; // DFA レジーム判定を有効化
-input int InpDfaWindowSize = 300;                                          // DFAの計算対象バー数
-input int InpDfaSmoothPeriod = 5;                                          // DFA平滑化期間 (1で平滑化なし)
-input double InpDfaThresholdLow = 0.45;                                    // レンジ判定閾値 (これ未満でレンジ)
-input double InpDfaThresholdHigh = 0.55;                                   // トレンド判定閾値 (これ超過でトレンド)
+input group "=== DFA (レジーム判定) 設定 ==="
+input bool InpUseDfa = true;                                                // DFA レジーム判定を有効化
+input ENUM_HTF_MODE InpDfaTimeframeMode = HTF_MODE_AUTO_NEXT;               // DFA 計算時間軸 (デフォルト: 1段階上位足)
+input int InpDfaWindowSize = 300;                                           // DFAの計算対象バー数
+input int InpDfaSmoothPeriod = 5;                                           // DFA平滑化期間 (1で平滑化なし)
+input double InpDfaThresholdLow = 0.45;                                     // レンジ判定閾値 (これ未満でレンジ)
+input double InpDfaThresholdHigh = 0.55;                                    // トレンド判定閾値 (これ超過でトレンド)
 
 //--- レンジ戦略 (Super Smoother + RSI) 設定
-input group "=== レンジ戦略 (Super Smoother + RSI) ===" input bool InpUseRangeStrategy = true; // レンジ戦略 (Super Smoother + RSI) を有効化
-input int InpSSPeriod = 14;                                                                    // Super Smoother 遮断周期
-input int InpRsiPeriod = 7;                                                                    // RSI 計算期間
-input double InpRsiOverbought = 65.0;                                                          // RSI 買われすぎ境界値
-input double InpRsiOversold = 35.0;                                                            // RSI 売られすぎ境界値
+input group "=== レンジ戦略 (Super Smoother + RSI) ==="
+input bool InpUseRangeStrategy = true;                                      // レンジ戦略 (Super Smoother + RSI) を有効化
+input int InpSSPeriod = 14;                                                 // Super Smoother 遮断周期
+input int InpRsiPeriod = 7;                                                 // RSI 計算期間
+input double InpRsiOverbought = 65.0;                                       // RSI 買われすぎ境界値
+input double InpRsiOversold = 35.0;                                         // RSI 売られすぎ境界値
 
 //--- トレンド戦略 (Dual ALMA Cross) 設定
-input group "=== トレンド戦略 (Dual ALMA) ===" input bool InpUseTrendStrategy = true; // トレンド戦略 (Dual ALMA Cross) を有効化
-input int InpAlmaFastWindow = 9;                                                      // 短期 ALMA 窓幅
-input int InpAlmaSlowWindow = 21;                                                     // 長期 ALMA 窓幅
-input double InpAlmaOffset = 0.85;                                                    // ALMA Offset (共通)
-input double InpAlmaSigma = 6.0;                                                      // ALMA Sigma (共通)
+input group "=== トレンド戦略 (Dual ALMA) ==="
+input bool InpUseTrendStrategy = true;                                      // トレンド戦略 (Dual ALMA Cross) を有効化
+input int InpAlmaFastWindow = 9;                                            // 短期 ALMA 窓幅
+input int InpAlmaSlowWindow = 21;                                           // 長期 ALMA 窓幅
+input double InpAlmaOffset = 0.85;                                          // ALMA Offset (共通)
+input double InpAlmaSigma = 6.0;                                            // ALMA Sigma (共通)
 
 //--- 出口戦略 (ATR Risk Management)
-input group "=== 出口戦略 (ATR) ===" input bool InpUseAtrExit = true; // ATR 出口戦略 (SL/TP) を有効化
-input int InpAtrPeriod = 14;                                          // ATR 期間
-input double InpAtrSlFactor = 1.5;                                    // ストップロス (ATR倍率)
-input double InpAtrTpFactor = 3.0;                                    // テイクプロフィット (ATR倍率)
+input group "=== 出口戦略 (ATR) ==="
+input bool InpUseAtrExit = true;                                            // ATR 出口戦略 (SL/TP) を有効化
+input ENUM_HTF_MODE InpAtrTimeframeMode = HTF_MODE_AUTO_NEXT;               // ATR 計算時間軸 (デフォルト: 1段階上位足)
+input int InpAtrPeriod = 14;                                                // ATR 期間
+input double InpAtrSlFactor = 1.5;                                          // ストップロス (ATR倍率)
+input double InpAtrTpFactor = 3.0;                                          // テイクプロフィット (ATR倍率)
 
 //+------------------------------------------------------------------+
 //| グローバル変数・オブジェクト                                     |
@@ -57,6 +63,9 @@ int h_dfa = INVALID_HANDLE;
 int h_smoothedRsi = INVALID_HANDLE;
 int h_dualAlma = INVALID_HANDLE;
 int h_atr = INVALID_HANDLE;
+
+ENUM_TIMEFRAMES m_dfaTf = PERIOD_CURRENT;
+ENUM_TIMEFRAMES m_atrTf = PERIOD_CURRENT;
 
 datetime m_lastBarTime = 0;
 
@@ -73,13 +82,20 @@ int OnInit() {
     m_trade.SetDeviationInPoints(InpSlippage);
     m_trade.SetTypeFillingBySymbol(_Symbol);
 
+    // 計算時間軸の解決 (DFA / ATR)
+    m_dfaTf = ResolveTimeframe(InpDfaTimeframeMode, _Period);
+    m_atrTf = ResolveTimeframe(InpAtrTimeframeMode, _Period);
+
+    PrintFormat("[Hybrid_DFA_EA] チャート時間軸: %s | DFA計算時間軸: %s | ATR計算時間軸: %s",
+                EnumToString(_Period), EnumToString(m_dfaTf), EnumToString(m_atrTf));
+
     // 1. DFA インディケータハンドル取得
     if (InpUseDfa) {
-        h_dfa = iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DFA", InpDfaWindowSize, 8, 0, InpDfaSmoothPeriod,
+        h_dfa = iCustom(_Symbol, m_dfaTf, "Hybrid_DFA_EA\\DFA", InpDfaWindowSize, 8, 0, InpDfaSmoothPeriod,
                         InpDfaThresholdLow, InpDfaThresholdHigh);
         if (h_dfa == INVALID_HANDLE) {
             // パスプレフィックス付きでフォールバック
-            h_dfa = iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DFA", InpDfaWindowSize, 8, 0,
+            h_dfa = iCustom(_Symbol, m_dfaTf, "Indicators\\Hybrid_DFA_EA\\DFA", InpDfaWindowSize, 8, 0,
                             InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh);
         }
         if (h_dfa == INVALID_HANDLE) {
@@ -88,7 +104,7 @@ int OnInit() {
         }
     }
 
-    // 2. Smoothed RSI インディケータハンドル取得
+    // 2. Smoothed RSI インディケータハンドル取得 (チャート足)
     if (InpUseRangeStrategy) {
         h_smoothedRsi =
             iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\SmoothedRSI", InpSSPeriod, InpRsiPeriod,
@@ -105,7 +121,7 @@ int OnInit() {
         }
     }
 
-    // 3. Dual ALMA インディケータハンドル取得
+    // 3. Dual ALMA インディケータハンドル取得 (チャート足)
     if (InpUseTrendStrategy) {
         h_dualAlma =
             iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DualALMA", InpAlmaFastWindow,
@@ -122,9 +138,9 @@ int OnInit() {
         }
     }
 
-    // 4. ATR インディケータハンドル取得
+    // 4. ATR インディケータハンドル取得 (上位足)
     if (InpUseAtrExit) {
-        h_atr = iATR(_Symbol, _Period, InpAtrPeriod);
+        h_atr = iATR(_Symbol, m_atrTf, InpAtrPeriod);
         if (h_atr == INVALID_HANDLE) {
             Print("[Hybrid_DFA_EA] ATR インディケータのハンドル取得に失敗しました。");
             return INIT_FAILED;
@@ -173,11 +189,17 @@ bool UpdateSystemState(SSystemState& state) {
     ZeroMemory(state);
     state.regime = REGIME_ALL;
 
-    // 1. DFA 指数の取得
+    datetime bar1_time = iTime(_Symbol, _Period, 1);
+
+    // 1. DFA 指数の取得 (確定足時刻基準)
     if (InpUseDfa && h_dfa != INVALID_HANDLE) {
         double dfaBuf[];
         ArraySetAsSeries(dfaBuf, true);
-        if (CopyBuffer(h_dfa, 0, 1, 1, dfaBuf) > 0) {
+        int copied = CopyBuffer(h_dfa, 0, bar1_time, 1, dfaBuf);
+        if (copied <= 0) {
+            copied = CopyBuffer(h_dfa, 0, 1, 1, dfaBuf);
+        }
+        if (copied > 0) {
             state.alpha = dfaBuf[0];
             if (state.alpha < InpDfaThresholdLow) {
                 state.regime = REGIME_RANGE;
@@ -222,11 +244,15 @@ bool UpdateSystemState(SSystemState& state) {
         }
     }
 
-    // 4. ATR の取得 (バー1)
+    // 4. ATR の取得 (確定足時刻基準)
     if (InpUseAtrExit && h_atr != INVALID_HANDLE) {
         double atrBuf[];
         ArraySetAsSeries(atrBuf, true);
-        if (CopyBuffer(h_atr, 0, 1, 1, atrBuf) > 0) {
+        int copied = CopyBuffer(h_atr, 0, bar1_time, 1, atrBuf);
+        if (copied <= 0) {
+            copied = CopyBuffer(h_atr, 0, 1, 1, atrBuf);
+        }
+        if (copied > 0) {
             state.atr = atrBuf[0];
         } else {
             Print("[Hybrid_DFA_EA] ATR バッファ取得エラー");

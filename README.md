@@ -110,6 +110,7 @@ graph TD
 | **`InpRiskPercent`** | `1.0` | 1トレードあたりの許容リスク (%) |
 | **`InpFixedLot`** | `0.1` | 固定ロット数 (RiskPercent=0時に適用) |
 | **`InpUseDfa`** | `true` | DFAレジーム判定フィルターの有効化 |
+| **`InpDfaTimeframeMode`** | `HTF_MODE_AUTO_NEXT` | DFA 計算時間軸 (デフォルト: 自動1段階上位足) |
 | **`InpDfaWindowSize`** | `300` | DFA 計算対象バー数 ($N$) |
 | **`InpDfaSmoothPeriod`** | `5` | DFA 平滑化期間 (Super Smoother) |
 | **`InpDfaThresholdLow`** | `0.45` | レンジ相場判定閾値 ($\alpha < \text{Low}$) |
@@ -123,6 +124,7 @@ graph TD
 | **`InpAlmaFastWindow`** | `9` | 短期 ALMA 期間 |
 | **`InpAlmaSlowWindow`** | `21` | 長期 ALMA 期間 |
 | **`InpUseAtrExit`** | `true` | ATR ベース動的 TP/SL の有効化 |
+| **`InpAtrTimeframeMode`** | `HTF_MODE_AUTO_NEXT` | ATR 計算時間軸 (デフォルト: 自動1段階上位足) |
 | **`InpAtrPeriod`** | `14` | ATR 計算期間 |
 | **`InpAtrTpFactor`** | `3.0` | ATR 利確乗数 ($\text{ATR} \times 3.0$) |
 | **`InpAtrSlFactor`** | `1.5` | ATR 損切乗数 ($\text{ATR} \times 1.5$) |
@@ -134,6 +136,7 @@ graph TD
 1. **ファイルの配置**:
    - `Experts/Hybrid_DFA_EA.mq5` を MT5 の `MQL5/Experts/` 配下に配置
    - `Indicators/Hybrid_DFA_EA/` フォルダを MT5 の `MQL5/Indicators/` 配下に配置
+   - `Include/Hybrid_DFA_EA/` フォルダを MT5 の `MQL5/Include/` 配下に配置
 2. **コンパイル**:
    - MetaEditor で以下のファイルを順次開き、**F7** キーでコンパイルします：
      1. `Indicators/Hybrid_DFA_EA/DFA.mq5`
@@ -142,12 +145,19 @@ graph TD
      4. `Experts/Hybrid_DFA_EA.mq5`
 3. **バックテスト実行**:
    - MT5 のストラテジーテスターを開き、`Hybrid_DFA_EA` を選択してバックテストを実行します。
-   - 推奨時間軸: **1時間足 (H1)**
+   - 推奨時間軸: **1時間足 (H1)** (DFA/ATRは自動でH4上位足を適用)
    - 推奨通貨ペア: **USDJPY, EURUSD**
 
 ---
 
 ## 6. 改訂履歴 (Changelog)
+
+### [v1.2.0] - 2026-08-30
+- **マルチタイムフレーム (MTF) サポート (`Hybrid_DFA_EA.mq5`, `DFA_Common.mqh`)**:
+  - DFA（環境認識）および ATR（リスク管理・決済）において、取引足より1段階上の上位足（M1→M5, M5→M15, M15→M30, M30→H1, H1→H4, H4→D1, D1→W1, W1→MN）を自動適用する `HTF_MODE_AUTO_NEXT` を実装（デフォルト設定）。
+  - 下位足の微細ノイズやダマシ損切りを排除し、大局的なレジームと十分なボラティリティバッファを確保。
+  - チャート足（同時間軸）や特定時間軸への固定切り替えもパラメータでサポート。
+  - 直近確定足時刻（`bar1_time`）を基準としたリペイント・ルックアヘッドフリーな安全データ取得ロジックを採用。
 
 ### [v1.1.0] - 2026-08-30
 - **DFA (`DFA.mq5`)**:
