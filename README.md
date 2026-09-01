@@ -30,13 +30,17 @@ graph TD
 ```text
 ├── Experts/
 │   └── Hybrid_DFA_EA.mq5         # メイン自動売買EA (ポジション管理・発注制御)
+├── Include/
+│   └── Hybrid_DFA_EA/
+│       └── DFA_Common.mqh        # 共通定義・資金管理・注文執行補助・レジーム状態遷移機械
 ├── Indicators/
 │   └── Hybrid_DFA_EA/
-│       ├── DFA.mq5               # 双方向DFAレジーム判別インディケータ
+│       ├── DFA.mq5               # 双方向DFAレジーム判別インディケータ (静的バッファ最適化済み)
 │       ├── SmoothedRSI.mq5       # 2-Pole Super Smoother 平滑化RSI
 │       └── DualALMA.mq5          # デュアル・アーナウドレグー移動平均線
 └── docs/
-    └── 20260822_2_DFA-Smoother ハイブリッド高堅牢化取引システム 仕様書（改訂版）.md
+    ├── 20260822_2_DFA-Smoother ハイブリッド高堅牢化取引システム 仕様書（改訂版）.md
+    └── 20260901_MQL5 EA Implementation Review.md
 ```
 
 ---
@@ -47,6 +51,9 @@ graph TD
 
 時系列の対数リターン系列 $\Delta \ln P_t$ に対して DFA-1 解析を行い、ハースト指数 $H$ に相当するスケーリング指数 $\alpha$ を算出します。
 
+- **静的バッファによるメモリ・計算最適化 (v1.3.0)**:
+  - 毎バーの動的配列生成（`ArrayResize`）を完全に排除し、グローバル領域に事前割り当てした静的ワーク配列を再利用。
+  - バックテスト初期化時の数千回に及ぶヒープ断片化とCPUキャッシュミスを根絶し、超高速バックテストを実現。
 - **マルチタイムフレーム (MTF) ネイティブ対応**:
   - `InpTimeframe` パラメータにより、インジケータ単体またはEA経由で上位足（例: M5チャート上でM15やH1）のDFA値を直接算出し、現在足チャート上にステップ状の波形として美しく同時描画。
 - **双方向ボックス分割（Bidirectional DFA）**:
@@ -89,8 +96,17 @@ graph TD
 
 ---
 
-### 3.4 ハイブリッド取引 EA (`Hybrid_DFA_EA.mq5`)
+### 3.4 ハイブリッド取引 EA (`Hybrid_DFA_EA.mq5` & `DFA_Common.mqh`)
 
+- **ヒステリシス付きレジーム状態遷移機械 (v1.3.0)**:
+  - シュミットトリガー方式による状態保持を導入。一度確定したレジーム（RANGE / TREND）を覆すには反対側の閾値を超える必要があり、閾値境界付近での微小振動によるチャタリング決済（往復ビンタ）を完全抑制。
+- **堅牢な実弾注文執行レイヤー (v1.3.0)**:
+  - **充填モード自動判定 (`DetectFillType`)**: `SYMBOL_FILLING_MODE` ビットマスクを解析し、ブローカー許容モード（FOK/IOC/RETURN）を安全に自動割り当て。
+  - **ストップレベル/スプレッドガード (`AdjustStopDistance`)**: ブローカーの最小ストップレベルおよび拡大スプレッドを加味し、`INVALID_STOPS` エラーを事前回避。
+  - **動的ロット正規化 (`NormalizeLot`)**: 銘柄ごとの `SYMBOL_VOLUME_STEP` 精度に自動追従して正規化し、`INVALID_VOLUME` エラーを防止。
+  - **有効証拠金基準の資金管理**: 含み損時の過剰レバレッジを防ぐため、許容リスク算出基準を `ACCOUNT_BALANCE` から `ACCOUNT_EQUITY` へ最適化。
+- **厳密な上位足タイムスタンプ同期 (v1.3.0)**:
+  - DFA および ATR のデータ取得において、上位足の確定足オープン時刻（`iTime(_Symbol, htf, 1)`）を個別に厳密指定。上位足の形成中未確定バーの巻き込み（リペイント）を構造的に完全排除。
 - **レジーム駆動型マルチ戦略**:
   - DFA の相場判定に応じて、Smoothed RSI（レンジ）と Dual ALMA（トレンド）のシグナル受付を動的にスイッチング。
 - **両建て防止 & ドテン決済**:
@@ -109,7 +125,7 @@ graph TD
 
 | パラメータ名 | デフォルト値 | 説明 |
 | :--- | :--- | :--- |
-| **`InpRiskPercent`** | `1.0` | 1トレードあたりの許容リスク (%) |
+| **`InpRiskPercent`** | `1.0` | 1トレードあたりの許容リスク (%) (有効証拠金基準) |
 | **`InpFixedLot`** | `0.1` | 固定ロット数 (RiskPercent=0時に適用) |
 | **`InpUseDfa`** | `true` | DFAレジーム判定フィルターの有効化 |
 | **`InpDfaTimeframeMode`** | `HTF_MODE_AUTO_NEXT` | DFA 計算時間軸 (デフォルト: 自動1段階上位足) |
@@ -153,6 +169,20 @@ graph TD
 ---
 
 ## 6. 改訂履歴 (Changelog)
+
+### [v1.3.0] - 2026-09-02
+- **DFA内部メモリの静的バッファ化 (`DFA.mq5`)**:
+  - `CalculateDfaAlphaAtBar` 内の動的 `ArrayResize` を全廃し、事前確保した静的ワーク配列を再利用。ヒープ断片化とキャッシュミスを解消し大幅に高速化。
+  - `blockX[]` 静的整数列の初期化を `OnInit` に集約。
+- **実弾運用向け注文執行レイヤーの強化 (`DFA_Common.mqh`, `Hybrid_DFA_EA.mq5`)**:
+  - `SYMBOL_FILLING_MODE` ビットマスクによる充填モード自動判定（`DetectFillType`）を実装。
+  - `SYMBOL_TRADE_STOPS_LEVEL` および現在スプレッドを考慮した動的 SL/TP 距離ガード補正（`AdjustStopDistance`）を追加。
+  - `SYMBOL_VOLUME_STEP` の小数桁数に応じた動的ロット正規化（`NormalizeLot`）を実装。
+  - 許容リスク額の算出基準を `ACCOUNT_BALANCE` から `ACCOUNT_EQUITY`（有効証拠金）に変更。
+- **シュミットトリガー方式レジーム状態遷移機械の導入 (`DFA_Common.mqh`, `Hybrid_DFA_EA.mq5`)**:
+  - レジーム判定にヒステリシス（粘り）を持たせ、境界値付近でのチャタリング（往復ビンタ）と不要な強制決済コストを防止。
+- **上位足確定足タイムスタンプ同期の厳密化 (`Hybrid_DFA_EA.mq5`)**:
+  - 上位足 DFA / ATR のデータ参照時に `iTime(_Symbol, htf, 1)` を指定し、未確定バー巻き込み（リペイント）を完全排除。
 
 ### [v1.2.0] - 2026-08-30
 - **マルチタイムフレーム (MTF) & チャート同時描画サポート (`Hybrid_DFA_EA.mq5`, `DFA.mq5`, `DFA_Common.mqh`)**:

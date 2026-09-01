@@ -39,6 +39,15 @@ int h_htfDfa = INVALID_HANDLE;
 //--- 平滑化係数
 double ssC1, ssC2, ssC3;
 
+//--- DFA 計算用静的ワーク配列 (毎バーの ArrayResize を排除しヒープ断片化を防止)
+double g_returns[];    // 対数リターン配列 (最大 N-1 要素)
+double g_Y[];          // 累積偏差プロファイル系列 (最大 N-1 要素)
+double g_logS[];       // スケール対数配列 (最大 numScales=16 要素)
+double g_logF[];       // ゆらぎ対数配列 (最大 numScales=16 要素)
+double g_blockX[];     // 局所回帰用 X 配列 (最大 sMax 要素, 静的整数列)
+double g_blockY[];     // 局所回帰用 Y 配列 (最大 sMax 要素)
+int    g_sMax = 0;     // 事前計算された最大ボックスサイズ
+
 //+------------------------------------------------------------------+
 //| カスタムインディケータ初期化関数                                 |
 //+------------------------------------------------------------------+
@@ -116,6 +125,25 @@ int OnInit() {
     return INIT_PARAMETERS_INCORRECT;
   }
 
+  // 静的ワーク配列の事前確保 (OnInit で1回だけ実行)
+  int N = InpDfaWindowSize;
+  int returnCount = N - 1;
+  int sMinCalc = (InpMinBoxSize >= 4) ? InpMinBoxSize : 4;
+  g_sMax = (InpMaxBoxSize > sMinCalc) ? InpMaxBoxSize : (returnCount / 4);
+  if (g_sMax <= sMinCalc) g_sMax = sMinCalc + 2;
+
+  ArrayResize(g_returns, returnCount);
+  ArrayResize(g_Y, returnCount);
+  ArrayResize(g_logS, 16);
+  ArrayResize(g_logF, 16);
+  ArrayResize(g_blockX, g_sMax);
+  ArrayResize(g_blockY, g_sMax);
+
+  // blockX[] の静的整数列を事前初期化 (バーループ内での反復初期化を排除)
+  for (int j = 0; j < g_sMax; j++) {
+    g_blockX[j] = (double)j;
+  }
+
   return INIT_SUCCEEDED;
 }
 
@@ -164,10 +192,8 @@ double CalculateDfaAlphaAtBar(const double &close[], const int barIdx,
     return 0.5; // データ不足時はデフォルト
   }
 
-  // 1. 対数リターンの計算と平均 (過去から現在へ)
+  // 1. 対数リターンの計算と平均 (過去から現在へ) — 静的配列 g_returns[] を再利用
   int returnCount = N - 1;
-  double returns[];
-  ArrayResize(returns, returnCount);
 
   double sumReturn = 0.0;
   int startPos = barIdx - N + 1;
@@ -175,50 +201,33 @@ double CalculateDfaAlphaAtBar(const double &close[], const int barIdx,
     int prevPos = startPos + i;
     int currPos = startPos + i + 1;
     if (close[prevPos] <= 0.0 || close[currPos] <= 0.0) {
-      returns[i] = 0.0;
+      g_returns[i] = 0.0;
     } else {
-      returns[i] = MathLog(close[currPos] / close[prevPos]);
+      g_returns[i] = MathLog(close[currPos] / close[prevPos]);
     }
-    sumReturn += returns[i];
+    sumReturn += g_returns[i];
   }
   double meanReturn = sumReturn / returnCount;
 
-  // 2. 累積和系列 Y_k の作成 (時系列順: 過去から現在へ)
-  double Y[];
-  ArrayResize(Y, returnCount);
+  // 2. 累積和系列 Y_k の作成 (時系列順: 過去から現在へ) — 静的配列 g_Y[] を再利用
   double cumSum = 0.0;
   for (int i = 0; i < returnCount; i++) {
-    cumSum += (returns[i] - meanReturn);
-    Y[i] = cumSum;
+    cumSum += (g_returns[i] - meanReturn);
+    g_Y[i] = cumSum;
   }
 
-  // 3. ボックスサイズ s のリスト選定
+  // 3. ボックスサイズ s のリスト選定 — g_sMax は OnInit で事前計算済み
   int sMin = (InpMinBoxSize >= 4) ? InpMinBoxSize : 4;
-  int sMax = (InpMaxBoxSize > sMin) ? InpMaxBoxSize : (returnCount / 4);
-  if (sMax <= sMin)
-    sMax = sMin + 2;
+  int sMax = g_sMax;
 
-  // 対数等間隔でスケール s を決定 (16スケール)
+  // 対数等間隔でスケール s を決定 (16スケール) — 静的配列 g_logS[], g_logF[] を再利用
   int numScales = 16;
   double logMin = MathLog(sMin);
   double logMax = MathLog(sMax);
   double step = (logMax - logMin) / (numScales - 1);
 
-  double logS[];
-  double logF[];
-  ArrayResize(logS, numScales);
-  ArrayResize(logF, numScales);
-
   int validScales = 0;
   int lastS = -1;
-
-  double blockX[];
-  double blockY[];
-  ArrayResize(blockX, sMax);
-  ArrayResize(blockY, sMax);
-  for (int j = 0; j < sMax; j++) {
-    blockX[j] = j;
-  }
 
   for (int k = 0; k < numScales; k++) {
     int s = (int)MathRound(MathExp(logMin + k * step));
@@ -245,14 +254,14 @@ double CalculateDfaAlphaAtBar(const double &close[], const int barIdx,
       }
 
       for (int j = 0; j < s; j++) {
-        blockY[j] = Y[blockStart + j];
+        g_blockY[j] = g_Y[blockStart + j];
       }
 
       double slope = 0.0, intercept = 0.0;
-      if (LinearRegression(blockX, blockY, s, slope, intercept)) {
+      if (LinearRegression(g_blockX, g_blockY, s, slope, intercept)) {
         for (int j = 0; j < s; j++) {
           double yFit = slope * j + intercept;
-          double diff = blockY[j] - yFit;
+          double diff = g_blockY[j] - yFit;
           sumSquaredResiduals += diff * diff;
         }
       }
@@ -260,8 +269,8 @@ double CalculateDfaAlphaAtBar(const double &close[], const int barIdx,
 
     double F_s = MathSqrt(sumSquaredResiduals / totalPoints);
     if (F_s > 1e-12) {
-      logS[validScales] = MathLog(s);
-      logF[validScales] = MathLog(F_s);
+      g_logS[validScales] = MathLog(s);
+      g_logF[validScales] = MathLog(F_s);
       validScales++;
     }
   }
@@ -272,7 +281,7 @@ double CalculateDfaAlphaAtBar(const double &close[], const int barIdx,
 
   // 4. スケーリング指数 Alpha の回帰 (ln F(s) = Alpha * ln s + C)
   double alpha = 0.5, intercept = 0.0;
-  if (LinearRegression(logS, logF, validScales, alpha, intercept)) {
+  if (LinearRegression(g_logS, g_logF, validScales, alpha, intercept)) {
     return alpha;
   }
 
