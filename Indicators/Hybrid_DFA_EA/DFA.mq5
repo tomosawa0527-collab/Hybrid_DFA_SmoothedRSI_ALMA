@@ -19,6 +19,7 @@
 
 //--- 入力パラメータ
 //--- DFA 設定
+input ENUM_TIMEFRAMES InpTimeframe = PERIOD_CURRENT;  // 計算対象時間軸 (PERIOD_CURRENT: チャート時間軸)
 input int InpDfaWindowSize = 300;                     // DFA 計算対象バー数 (N)
 input int InpMinBoxSize = 8;                          // 最小ボックスサイズ (s_min)
 input int InpMaxBoxSize = 0;                          // 最大ボックスサイズ (0: N/4 自動設定)
@@ -31,6 +32,9 @@ input double InpScaleMargin = 0.05;                   // 縮尺マージン (Low
 double AlphaBuffer[];
 double AlphaColors[];
 double RawAlphaBuffer[];
+
+//--- MTF 上位足用内部ハンドル
+int h_htfDfa = INVALID_HANDLE;
 
 //--- 平滑化係数
 double ssC1, ssC2, ssC3;
@@ -73,22 +77,39 @@ int OnInit() {
   IndicatorSetInteger(INDICATOR_LEVELCOLOR, 1, clrGray);
   IndicatorSetInteger(INDICATOR_LEVELCOLOR, 2, clrSilver);
 
+  string tfName = (InpTimeframe == PERIOD_CURRENT) ? EnumToString(_Period) : EnumToString(InpTimeframe);
   IndicatorSetString(INDICATOR_SHORTNAME,
-                     StringFormat("DFA(N=%d, Smooth=%d, Low=%.2f, High=%.2f)",
-                                  InpDfaWindowSize, InpSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh));
+                     StringFormat("DFA(%s, N=%d, Smooth=%d, Low=%.2f, High=%.2f)",
+                                  tfName, InpDfaWindowSize, InpSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh));
   IndicatorSetInteger(INDICATOR_DIGITS, 4);
 
-  // Super Smoother 平滑化係数の計算
-  if (InpSmoothPeriod > 1) {
-    double a = MathExp(-1.41421356 * M_PI / (double)InpSmoothPeriod);
-    double b = 2.0 * a * MathCos(1.41421356 * M_PI / (double)InpSmoothPeriod);
-    ssC2 = b;
-    ssC3 = -a * a;
-    ssC1 = 1.0 - ssC2 - ssC3;
+  // MTF モード (上位足指定時) の場合、上位足の DFA ハンドルを取得
+  if (InpTimeframe != PERIOD_CURRENT && InpTimeframe != _Period) {
+    h_htfDfa = iCustom(_Symbol, InpTimeframe, "Hybrid_DFA_EA\\DFA", PERIOD_CURRENT,
+                       InpDfaWindowSize, InpMinBoxSize, InpMaxBoxSize, InpSmoothPeriod,
+                       InpDfaThresholdLow, InpDfaThresholdHigh, InpScaleMargin);
+    if (h_htfDfa == INVALID_HANDLE) {
+      h_htfDfa = iCustom(_Symbol, InpTimeframe, "Indicators\\Hybrid_DFA_EA\\DFA", PERIOD_CURRENT,
+                         InpDfaWindowSize, InpMinBoxSize, InpMaxBoxSize, InpSmoothPeriod,
+                         InpDfaThresholdLow, InpDfaThresholdHigh, InpScaleMargin);
+    }
+    if (h_htfDfa == INVALID_HANDLE) {
+      PrintFormat("[DFA] 上位足 %s の内部DFAハンドル取得に失敗しました。", EnumToString(InpTimeframe));
+      return INIT_FAILED;
+    }
+  } else {
+    // 同時間軸計算用: Super Smoother 平滑化係数の計算
+    if (InpSmoothPeriod > 1) {
+      double a = MathExp(-1.41421356 * M_PI / (double)InpSmoothPeriod);
+      double b = 2.0 * a * MathCos(1.41421356 * M_PI / (double)InpSmoothPeriod);
+      ssC2 = b;
+      ssC3 = -a * a;
+      ssC1 = 1.0 - ssC2 - ssC3;
+    }
   }
 
-  PrintFormat("[DFA] OnInit 実行: InpDfaWindowSize=%d, InpMinBoxSize=%d, InpMaxBoxSize=%d, InpSmoothPeriod=%d",
-              InpDfaWindowSize, InpMinBoxSize, InpMaxBoxSize, InpSmoothPeriod);
+  PrintFormat("[DFA] OnInit 実行: Timeframe=%s, InpDfaWindowSize=%d, InpMinBoxSize=%d, InpMaxBoxSize=%d, InpSmoothPeriod=%d",
+              tfName, InpDfaWindowSize, InpMinBoxSize, InpMaxBoxSize, InpSmoothPeriod);
 
   if (InpDfaWindowSize < 30) {
     Print("[DFA] エラー: インプットパラメータが不正です。");
@@ -96,6 +117,16 @@ int OnInit() {
   }
 
   return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+//| カスタムインディケータ終了処理関数                               |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason) {
+  if (h_htfDfa != INVALID_HANDLE) {
+    IndicatorRelease(h_htfDfa);
+    h_htfDfa = INVALID_HANDLE;
+  }
 }
 
 //+------------------------------------------------------------------+
@@ -260,8 +291,38 @@ int OnCalculate(const int rates_total, const int prev_calculated,
     return 0;
   }
 
+  ArraySetAsSeries(time, false);
   ArraySetAsSeries(close, false);
 
+  // 1. MTF モード (上位足から取得する場合)
+  if (h_htfDfa != INVALID_HANDLE) {
+    int start = prev_calculated - 1;
+    if (start < 0)
+      start = 0;
+
+    for (int i = start; i < rates_total; i++) {
+      double buf[1];
+      if (CopyBuffer(h_htfDfa, 0, time[i], 1, buf) > 0) {
+        AlphaBuffer[i] = buf[0];
+        RawAlphaBuffer[i] = buf[0];
+
+        if (AlphaBuffer[i] < InpDfaThresholdLow) {
+          AlphaColors[i] = 0.0; // レンジ (赤)
+        } else if (AlphaBuffer[i] > InpDfaThresholdHigh) {
+          AlphaColors[i] = 2.0; // トレンド (青)
+        } else {
+          AlphaColors[i] = 1.0; // 中立・遷移 (グレー)
+        }
+      } else {
+        AlphaBuffer[i] = (i > 0) ? AlphaBuffer[i - 1] : EMPTY_VALUE;
+        RawAlphaBuffer[i] = (i > 0) ? RawAlphaBuffer[i - 1] : EMPTY_VALUE;
+        AlphaColors[i] = (i > 0) ? AlphaColors[i - 1] : 1.0;
+      }
+    }
+    return rates_total;
+  }
+
+  // 2. 通常モード (同時間軸で直接計算する場合)
   int start = prev_calculated - 1;
   if (start < InpDfaWindowSize) {
     start = InpDfaWindowSize;
@@ -272,12 +333,12 @@ int OnCalculate(const int rates_total, const int prev_calculated,
     }
   }
 
-  // 1. 生の DFA Alpha を計算 (i は 0=最古 から rates_total-1=最新 へ進む)
+  // 生の DFA Alpha を計算
   for (int i = start; i < rates_total; i++) {
     RawAlphaBuffer[i] = CalculateDfaAlphaAtBar(close, i, rates_total);
   }
 
-  // 2. 平滑化の適用 (過去から最新へ SuperSmoother フィルタを通す)
+  // 平滑化の適用
   if (InpSmoothPeriod > 1) {
     int ssStart = start;
     if (ssStart < InpDfaWindowSize + 2) {
@@ -296,7 +357,7 @@ int OnCalculate(const int rates_total, const int prev_calculated,
     }
   }
 
-  // 3. レジーム色分けの設定 (0=レンジ:赤, 1=中立:グレー, 2=トレンド:青)
+  // レジーム色分けの設定 (0=レンジ:赤, 1=中立:グレー, 2=トレンド:青)
   for (int i = start; i < rates_total; i++) {
     if (AlphaBuffer[i] == EMPTY_VALUE) {
       AlphaColors[i] = 1.0;
