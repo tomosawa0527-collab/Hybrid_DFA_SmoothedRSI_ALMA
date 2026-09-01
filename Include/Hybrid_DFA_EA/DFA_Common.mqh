@@ -33,6 +33,66 @@ enum ENUM_STRATEGY_SOURCE {
 enum ENUM_SIGNAL_TYPE { SIGNAL_NONE = 0, SIGNAL_BUY = 1, SIGNAL_SELL = -1 };
 
 //+------------------------------------------------------------------+
+//| 上位足/タイムフレーム選択列挙体                                  |
+//+------------------------------------------------------------------+
+enum ENUM_HTF_MODE {
+  HTF_MODE_AUTO_NEXT = 0,       // 自動 (1段階上の上位足)
+  HTF_MODE_CURRENT   = 1,       // チャート時間軸 (同時間軸)
+  HTF_MODE_M1        = PERIOD_M1,
+  HTF_MODE_M5        = PERIOD_M5,
+  HTF_MODE_M15       = PERIOD_M15,
+  HTF_MODE_M30       = PERIOD_M30,
+  HTF_MODE_H1        = PERIOD_H1,
+  HTF_MODE_H4        = PERIOD_H4,
+  HTF_MODE_D1        = PERIOD_D1,
+  HTF_MODE_W1        = PERIOD_W1,
+  HTF_MODE_MN1       = PERIOD_MN1
+};
+
+//+------------------------------------------------------------------+
+//| 1段階上の上位足を判定するヘルパー                                |
+//+------------------------------------------------------------------+
+ENUM_TIMEFRAMES GetNextHigherTimeframe(const ENUM_TIMEFRAMES current_tf) {
+  ENUM_TIMEFRAMES tf = (current_tf == PERIOD_CURRENT) ? _Period : current_tf;
+  switch (tf) {
+    case PERIOD_M1:  return PERIOD_M5;
+    case PERIOD_M2:
+    case PERIOD_M3:
+    case PERIOD_M4:
+    case PERIOD_M5:  return PERIOD_M15;
+    case PERIOD_M6:
+    case PERIOD_M10:
+    case PERIOD_M12:
+    case PERIOD_M15: return PERIOD_M30;
+    case PERIOD_M20:
+    case PERIOD_M30: return PERIOD_H1;
+    case PERIOD_H1:
+    case PERIOD_H2:
+    case PERIOD_H3:  return PERIOD_H4;
+    case PERIOD_H4:
+    case PERIOD_H6:
+    case PERIOD_H8:
+    case PERIOD_H12: return PERIOD_D1;
+    case PERIOD_D1:  return PERIOD_W1;
+    case PERIOD_W1:  return PERIOD_MN1;
+    default:         return PERIOD_MN1;
+  }
+}
+
+//+------------------------------------------------------------------+
+//| 設定から実効タイムフレームを解決するヘルパー                     |
+//+------------------------------------------------------------------+
+ENUM_TIMEFRAMES ResolveTimeframe(const ENUM_HTF_MODE mode, const ENUM_TIMEFRAMES current_tf = PERIOD_CURRENT) {
+  ENUM_TIMEFRAMES base_tf = (current_tf == PERIOD_CURRENT) ? _Period : current_tf;
+  if (mode == HTF_MODE_AUTO_NEXT) {
+    return GetNextHigherTimeframe(base_tf);
+  } else if (mode == HTF_MODE_CURRENT) {
+    return base_tf;
+  }
+  return (ENUM_TIMEFRAMES)mode;
+}
+
+//+------------------------------------------------------------------+
 //| システム内部状態構造体                                           |
 //+------------------------------------------------------------------+
 struct SSystemState {
