@@ -201,13 +201,10 @@ bool UpdateSystemState(SSystemState& state) {
         double dfaBuf[];
         ArraySetAsSeries(dfaBuf, true);
 
-        // Phase 4: 上位足の確定足タイムスタンプを厳密に指定
-        // m_dfaTf の Bar 1 (確定済み) のオープン時刻を取得
-        datetime dfa_bar1_time = iTime(_Symbol, m_dfaTf, 1);
-        int copied = CopyBuffer(h_dfa, 0, dfa_bar1_time, 1, dfaBuf);
+        // Phase 4: h_dfa はチャート足上で上位足から同期展開されているため、チャート足の直近確定足(Bar 1)を参照
+        int copied = CopyBuffer(h_dfa, 0, 1, 1, dfaBuf);
         if (copied <= 0) {
-            // フォールバック: インデックス指定
-            copied = CopyBuffer(h_dfa, 0, 1, 1, dfaBuf);
+            copied = CopyBuffer(h_dfa, 0, bar1_time, 1, dfaBuf);
         }
         if (copied > 0) {
             state.alpha = dfaBuf[0];
@@ -369,33 +366,67 @@ void OnTick() {
     CountOpenPositions(rangeBuys, rangeSells, trendBuys, trendSells);
 
     //------------------------------------------------------------------
-    // 1. レジーム逆行・逆クロス時の強制決済 (仕様 4.2)
+    // 1. レジーム逆行時の強制決済 (0.50 基準線跨ぎ判定) (仕様 4.2)
     //------------------------------------------------------------------
     if (InpUseDfa) {
-        // レンジポジション保有中、トレンド発生 (alpha > High) で即時決済
-        if ((rangeBuys > 0 || rangeSells > 0) && state.regime == REGIME_TREND) {
-            Print("[Hybrid_DFA_EA] "
-                  "レジームがトレンドに変化したためレンジポジションを強制決済します。"
-                  "Alpha: ",
-                  DoubleToString(state.alpha, 4));
+        // レンジポジション保有中、DFA Alpha が 0.50 を上回ったら強制決済
+        if ((rangeBuys > 0 || rangeSells > 0) && ShouldCloseRegimePosition(STRATEGY_RANGE, state.alpha, 0.50)) {
+            PrintFormat("[Hybrid_DFA_EA] レジーム逆行検知: DFA Alpha (%.4f) が 0.50 を上回ったためレンジポジションを決済します。",
+                        state.alpha);
             ClosePositionsByStrategy(STRATEGY_RANGE);
             rangeBuys = 0;
             rangeSells = 0;
         }
 
-        // トレンドポジション保有中、レンジ移行 (alpha < Low) で即時決済
-        if ((trendBuys > 0 || trendSells > 0) && state.regime == REGIME_RANGE) {
-            Print("[Hybrid_DFA_EA] "
-                  "レジームがレンジに変化したためトレンドポジションを強制決済します。"
-                  "Alpha: ",
-                  DoubleToString(state.alpha, 4));
+        // トレンドポジション保有中、DFA Alpha が 0.50 を下回ったら強制決済
+        if ((trendBuys > 0 || trendSells > 0) && ShouldCloseRegimePosition(STRATEGY_TREND, state.alpha, 0.50)) {
+            PrintFormat("[Hybrid_DFA_EA] レジーム逆行検知: DFA Alpha (%.4f) が 0.50 を下回ったためトレンドポジションを決済します。",
+                        state.alpha);
             ClosePositionsByStrategy(STRATEGY_TREND);
             trendBuys = 0;
             trendSells = 0;
         }
     }
 
-    // トレンドポジション保有中のALMA逆交差による決済
+    //------------------------------------------------------------------
+    // 2. レンジポジション保有中のRSIによる利確・損切り決済 (単独エグジット)
+    //------------------------------------------------------------------
+    if (InpUseRangeStrategy) {
+        // レンジBUYポジション保有時
+        if (rangeBuys > 0) {
+            // 利確: 50クロス/到達 (RSI >= 50.0)
+            if (state.smoothed_rsi_1 >= 50.0) {
+                PrintFormat("[Hybrid_DFA_EA] レンジBUY利確決済 (RSIが50.0以上に到達): RSI=%.2f", state.smoothed_rsi_1);
+                ClosePositionsByStrategy(STRATEGY_RANGE);
+                rangeBuys = 0;
+            }
+            // 損切り: 売られすぎ水準(InpRsiOversold)未満に逆行 (RSI < InpRsiOversold)
+            else if (state.smoothed_rsi_1 < InpRsiOversold) {
+                PrintFormat("[Hybrid_DFA_EA] レンジBUY損切り決済 (RSIが売られすぎ%.2f未満に逆行): RSI=%.2f", InpRsiOversold, state.smoothed_rsi_1);
+                ClosePositionsByStrategy(STRATEGY_RANGE);
+                rangeBuys = 0;
+            }
+        }
+        // レンジSELLポジション保有時
+        if (rangeSells > 0) {
+            // 利確: 50クロス/到達 (RSI <= 50.0)
+            if (state.smoothed_rsi_1 <= 50.0) {
+                PrintFormat("[Hybrid_DFA_EA] レンジSELL利確決済 (RSIが50.0以下に到達): RSI=%.2f", state.smoothed_rsi_1);
+                ClosePositionsByStrategy(STRATEGY_RANGE);
+                rangeSells = 0;
+            }
+            // 損切り: 買われすぎ水準(InpRsiOverbought)より大きい値に逆行 (RSI > InpRsiOverbought)
+            else if (state.smoothed_rsi_1 > InpRsiOverbought) {
+                PrintFormat("[Hybrid_DFA_EA] レンジSELL損切り決済 (RSIが買われすぎ%.2f超に逆行): RSI=%.2f", InpRsiOverbought, state.smoothed_rsi_1);
+                ClosePositionsByStrategy(STRATEGY_RANGE);
+                rangeSells = 0;
+            }
+        }
+    }
+
+    //------------------------------------------------------------------
+    // 3. トレンドポジション保有中のALMA逆交差による決済
+    //------------------------------------------------------------------
     if (InpUseTrendStrategy) {
         // トレンドBUY保有中にデッドクロス発生
         if (trendBuys > 0 && state.alma_fast_2 >= state.alma_slow_2 &&
