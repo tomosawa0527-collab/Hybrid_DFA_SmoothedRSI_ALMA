@@ -94,12 +94,12 @@ int OnInit() {
 
     // 1. DFA インディケータハンドル取得 (チャート足上で上位足算出: サブウィンドウ1)
     if (InpUseDfa) {
-        h_dfa = iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DFA", m_dfaTf, InpDfaWindowSize, 8, 0,
-                        InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh);
+        h_dfa = iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DFA", m_dfaTf, InpDfaWindowSize, 10, 0,
+                        1500, InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, 0.25);
         if (h_dfa == INVALID_HANDLE) {
             // パスプレフィックス付きでフォールバック
-            h_dfa = iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DFA", m_dfaTf, InpDfaWindowSize, 8, 0,
-                            InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh);
+            h_dfa = iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DFA", m_dfaTf, InpDfaWindowSize, 10, 0,
+                            1500, InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, 0.25);
         }
         if (h_dfa == INVALID_HANDLE) {
             Print("[Hybrid_DFA_EA] DFA インディケータのハンドル取得に失敗しました。");
