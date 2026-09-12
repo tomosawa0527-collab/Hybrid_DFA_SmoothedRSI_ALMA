@@ -109,49 +109,147 @@ struct SSystemState {
 };
 
 //+------------------------------------------------------------------+
+//| ブローカー許容充填モードの自動判定 (Phase 2)                    |
+//+------------------------------------------------------------------+
+ENUM_ORDER_TYPE_FILLING DetectFillType(const string symbol) {
+  long fillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+
+  // 優先度順: FOK > IOC > RETURN
+  if ((fillMode & SYMBOL_FILLING_FOK) != 0)
+    return ORDER_FILLING_FOK;
+  if ((fillMode & SYMBOL_FILLING_IOC) != 0)
+    return ORDER_FILLING_IOC;
+
+  return ORDER_FILLING_RETURN;
+}
+
+//+------------------------------------------------------------------+
+//| ストップレベル/スプレッドを考慮したSL/TP距離の補正 (Phase 2)      |
+//+------------------------------------------------------------------+
+double AdjustStopDistance(const string symbol, const double desiredDistance) {
+  // ストップレベル (ポイント単位)
+  long stopsLevel = SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+  // 現在スプレッド (ポイント単位)
+  long spreadPoints = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+  double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+
+  if (point <= 0.0) return desiredDistance;
+
+  // 最小許容距離 = max(ストップレベル, スプレッド) * point + マージン(2ポイント)
+  double minStopPoints = MathMax((double)stopsLevel, (double)spreadPoints) + 2.0;
+  double minDistance = minStopPoints * point;
+
+  if (desiredDistance >= minDistance) {
+    return desiredDistance;
+  }
+
+  PrintFormat("[DFA_Common] SL/TP距離を補正: %.5f -> %.5f (ストップレベル=%d, スプレッド=%d)",
+              desiredDistance, minDistance, (int)stopsLevel, (int)spreadPoints);
+  return minDistance;
+}
+
+//+------------------------------------------------------------------+
+//| SYMBOL_VOLUME_STEP に基づく動的ロット正規化 (Phase 2)              |
+//+------------------------------------------------------------------+
+double NormalizeLot(const string symbol, const double lot) {
+  double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+  double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+  double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+
+  if (lotStep <= 0.0) lotStep = 0.01;
+
+  // lotStep の小数桁数を動的に取得
+  int digits = 0;
+  double tmp = lotStep;
+  while (MathAbs(tmp - MathRound(tmp)) > 1e-9 && digits < 8) {
+    tmp *= 10.0;
+    digits++;
+  }
+
+  // lotStep へのアライメント (切り捨て)
+  double result = MathFloor(lot / lotStep) * lotStep;
+
+  // 最小・最大制限
+  if (result < minLot) result = minLot;
+  if (result > maxLot) result = maxLot;
+
+  return NormalizeDouble(result, digits);
+}
+
+//+------------------------------------------------------------------+
 //| 許容リスク%または固定ロットから取引ロット数を計算                |
 //+------------------------------------------------------------------+
 double CalculateLotSize(const string symbol, const double riskPercent,
                         const double fixedLot,
                         const double stopLossDistancePrice) {
   if (riskPercent <= 0.0) {
-    return NormalizeDouble(fixedLot, 2);
+    return NormalizeLot(symbol, fixedLot);
   }
 
-  double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-  double riskAmount = accountBalance * (riskPercent / 100.0);
+  // Phase 2: ACCOUNT_BALANCE → ACCOUNT_EQUITY に変更 (含み損時の過剰レバレッジを防止)
+  double accountEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+  double riskAmount = accountEquity * (riskPercent / 100.0);
 
   if (stopLossDistancePrice <= 0.0) {
-    return NormalizeDouble(fixedLot, 2);
+    return NormalizeLot(symbol, fixedLot);
   }
 
   double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
   double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
   double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
-  double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-  double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
 
   if (tickSize <= 0.0 || tickValue <= 0.0 || lotStep <= 0.0) {
-    return NormalizeDouble(fixedLot, 2);
+    return NormalizeLot(symbol, fixedLot);
   }
 
   double ticksAtRisk = stopLossDistancePrice / tickSize;
   double moneyLossPerOneLot = ticksAtRisk * tickValue;
 
   if (moneyLossPerOneLot <= 0.0) {
-    return NormalizeDouble(fixedLot, 2);
+    return NormalizeLot(symbol, fixedLot);
   }
 
   double calculatedLot = riskAmount / moneyLossPerOneLot;
 
-  // ロットステップへのアライメント
-  calculatedLot = MathFloor(calculatedLot / lotStep) * lotStep;
+  // Phase 2: NormalizeLot で SYMBOL_VOLUME_STEP に適合した動的精度正規化
+  return NormalizeLot(symbol, calculatedLot);
+}
 
-  // 最小・最大制限
-  if (calculatedLot < minLot)
-    calculatedLot = minLot;
-  if (calculatedLot > maxLot)
-    calculatedLot = maxLot;
+//+------------------------------------------------------------------+
+//| ヒステリシス付きレジーム状態遷移 (Phase 3)                      |
+//| 既存の ThresholdLow / ThresholdHigh をヒステリシスバンドとして使用  |
+//| 一度確定したレジームを覆すには反対側の閾値を超える必要がある  |
+//+------------------------------------------------------------------+
+ENUM_REGIME_TYPE UpdateRegimeWithHysteresis(
+    const ENUM_REGIME_TYPE prevRegime,
+    const double alpha,
+    const double thresholdLow,
+    const double thresholdHigh) {
 
-  return NormalizeDouble(calculatedLot, 2);
+  switch (prevRegime) {
+    case REGIME_RANGE:
+      // RANGE → TREND: α が ThresholdHigh を超えて初めて遷移
+      if (alpha > thresholdHigh)
+        return REGIME_TREND;
+      // RANGE → TRANSITION: α が不感帯に入っても RANGE を維持 (粘り)
+      return REGIME_RANGE;
+
+    case REGIME_TREND:
+      // TREND → RANGE: α が ThresholdLow を下回って初めて遷移
+      if (alpha < thresholdLow)
+        return REGIME_RANGE;
+      // TREND → TRANSITION: α が不感帯に入っても TREND を維持 (粘り)
+      return REGIME_TREND;
+
+    case REGIME_TRANSITION:
+    case REGIME_NONE:
+    case REGIME_ALL:
+    default:
+      // 初回または未判定状態: 従来通りの閾値判定
+      if (alpha < thresholdLow)
+        return REGIME_RANGE;
+      if (alpha > thresholdHigh)
+        return REGIME_TREND;
+      return REGIME_TRANSITION;
+  }
 }
