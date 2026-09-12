@@ -69,6 +69,9 @@ ENUM_TIMEFRAMES m_atrTf = PERIOD_CURRENT;
 
 datetime m_lastBarTime = 0;
 
+// Phase 3: レジーム状態遷移機械の状態保持
+ENUM_REGIME_TYPE g_currentRegime = REGIME_NONE;
+
 // マジックナンバー個別オフセット（戦略ソース追跡用）
 #define MAGIC_RANGE_OFFSET 1
 #define MAGIC_TREND_OFFSET 2
@@ -77,10 +80,10 @@ datetime m_lastBarTime = 0;
 //| 初期化関数                                                       |
 //+------------------------------------------------------------------+
 int OnInit() {
-    // CTrade 初期設定
     m_trade.SetExpertMagicNumber(InpMagicNumber);
     m_trade.SetDeviationInPoints(InpSlippage);
-    m_trade.SetTypeFillingBySymbol(_Symbol);
+    // Phase 2: ブローカー許容充填モードの自動判定に置換
+    m_trade.SetTypeFilling(DetectFillType(_Symbol));
 
     // 計算時間軸の解決 (DFA / ATR)
     m_dfaTf = ResolveTimeframe(InpDfaTimeframeMode, _Period);
@@ -189,25 +192,39 @@ bool UpdateSystemState(SSystemState& state) {
     ZeroMemory(state);
     state.regime = REGIME_ALL;
 
+    // チャート足の Bar 1 時刻 (SmoothedRSI / DualALMA はチャート足基準で参照)
+    // ※ DFA / ATR は Phase 4 で各々上位足の iTime で個別取得に変更済み
     datetime bar1_time = iTime(_Symbol, _Period, 1);
 
-    // 1. DFA 指数の取得 (確定足時刻基準)
+    // 1. DFA 指数の取得
     if (InpUseDfa && h_dfa != INVALID_HANDLE) {
         double dfaBuf[];
         ArraySetAsSeries(dfaBuf, true);
-        int copied = CopyBuffer(h_dfa, 0, bar1_time, 1, dfaBuf);
+
+        // Phase 4: 上位足の確定足タイムスタンプを厳密に指定
+        // m_dfaTf の Bar 1 (確定済み) のオープン時刻を取得
+        datetime dfa_bar1_time = iTime(_Symbol, m_dfaTf, 1);
+        int copied = CopyBuffer(h_dfa, 0, dfa_bar1_time, 1, dfaBuf);
         if (copied <= 0) {
+            // フォールバック: インデックス指定
             copied = CopyBuffer(h_dfa, 0, 1, 1, dfaBuf);
         }
         if (copied > 0) {
             state.alpha = dfaBuf[0];
-            if (state.alpha < InpDfaThresholdLow) {
-                state.regime = REGIME_RANGE;
-            } else if (state.alpha > InpDfaThresholdHigh) {
-                state.regime = REGIME_TREND;
-            } else {
-                state.regime = REGIME_TRANSITION;
+            // Phase 3: ヒステリシス付き状態遷移機械でレジーム判定
+            ENUM_REGIME_TYPE newRegime = UpdateRegimeWithHysteresis(
+                g_currentRegime, state.alpha, InpDfaThresholdLow, InpDfaThresholdHigh);
+            if (newRegime != g_currentRegime) {
+                string prevStr = (g_currentRegime == REGIME_RANGE ? "RANGE" :
+                                  (g_currentRegime == REGIME_TREND ? "TREND" :
+                                   (g_currentRegime == REGIME_TRANSITION ? "TRANSITION" : "NONE")));
+                string newStr = (newRegime == REGIME_RANGE ? "RANGE" :
+                                 (newRegime == REGIME_TREND ? "TREND" : "TRANSITION"));
+                PrintFormat("[Hybrid_DFA_EA] レジーム遷移: %s -> %s (Alpha=%.4f)",
+                            prevStr, newStr, state.alpha);
+                g_currentRegime = newRegime;
             }
+            state.regime = g_currentRegime;
         } else {
             Print("[Hybrid_DFA_EA] DFA バッファ取得エラー");
             return false;
@@ -244,11 +261,14 @@ bool UpdateSystemState(SSystemState& state) {
         }
     }
 
-    // 4. ATR の取得 (確定足時刻基準)
+    // 4. ATR の取得
     if (InpUseAtrExit && h_atr != INVALID_HANDLE) {
         double atrBuf[];
         ArraySetAsSeries(atrBuf, true);
-        int copied = CopyBuffer(h_atr, 0, bar1_time, 1, atrBuf);
+
+        // Phase 4: 上位足の確定足タイムスタンプを厳密に指定
+        datetime atr_bar1_time = iTime(_Symbol, m_atrTf, 1);
+        int copied = CopyBuffer(h_atr, 0, atr_bar1_time, 1, atrBuf);
         if (copied <= 0) {
             copied = CopyBuffer(h_atr, 0, 1, 1, atrBuf);
         }
@@ -480,6 +500,10 @@ bool ExecuteOrder(const ENUM_ORDER_TYPE orderType,
     if (InpUseAtrExit && atr > 0.0) {
         slDistance = atr * InpAtrSlFactor;
         double tpDistance = atr * InpAtrTpFactor;
+
+        // Phase 2: ストップレベル/スプレッドを考慮したSL/TP距離の補正
+        slDistance = AdjustStopDistance(_Symbol, slDistance);
+        tpDistance = AdjustStopDistance(_Symbol, tpDistance);
 
         if (orderType == ORDER_TYPE_BUY) {
             slPrice = NormalizeDouble(ask - slDistance, _Digits);
