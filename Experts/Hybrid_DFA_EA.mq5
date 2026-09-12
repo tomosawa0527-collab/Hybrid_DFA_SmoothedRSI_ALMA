@@ -28,6 +28,8 @@ input int InpDfaWindowSize = 300;                                           // D
 input int InpDfaSmoothPeriod = 5;                                           // DFA平滑化期間 (1で平滑化なし)
 input double InpDfaThresholdLow = 0.45;                                     // レンジ判定閾値 (これ未満でレンジ)
 input double InpDfaThresholdHigh = 0.55;                                    // トレンド判定閾値 (これ超過でトレンド)
+input bool InpDfaUseDriftFilter = true;                                     // ドリフト結合フィルタ (効率比によるトレンド判定補正)
+input double InpDfaDriftThreshold = 0.20;                                   // トレンド認定効率比(ER)閾値 (推奨: 0.15〜0.25)
 
 //--- レンジ戦略 (Super Smoother + RSI) 設定
 input group "=== レンジ戦略 (Super Smoother + RSI) ==="
@@ -95,11 +97,13 @@ int OnInit() {
     // 1. DFA インディケータハンドル取得 (チャート足上で上位足算出: サブウィンドウ1)
     if (InpUseDfa) {
         h_dfa = iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DFA", m_dfaTf, InpDfaWindowSize, 10, 0,
-                        1500, InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, 0.25);
+                        1500, InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, 0.25,
+                        InpDfaUseDriftFilter, InpDfaDriftThreshold);
         if (h_dfa == INVALID_HANDLE) {
             // パスプレフィックス付きでフォールバック
             h_dfa = iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DFA", m_dfaTf, InpDfaWindowSize, 10, 0,
-                            1500, InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, 0.25);
+                            1500, InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, 0.25,
+                            InpDfaUseDriftFilter, InpDfaDriftThreshold);
         }
         if (h_dfa == INVALID_HANDLE) {
             Print("[Hybrid_DFA_EA] DFA インディケータのハンドル取得に失敗しました。");

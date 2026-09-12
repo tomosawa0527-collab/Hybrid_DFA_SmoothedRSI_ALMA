@@ -27,6 +27,8 @@ input int InpSmoothPeriod = 5;                        // 平滑化期間 (1: 平
 input double InpDfaThresholdLow = 0.45;               // レンジ判定閾値 (これ未満でレンジ)
 input double InpDfaThresholdHigh = 0.55;              // トレンド判定閾値 (これ超過でトレンド)
 input double InpScaleMargin = 0.25;                   // 縮尺マージン (Low-Margin 〜 High+Margin)
+input bool InpUseDriftFilter = true;                  // ドリフト結合フィルタ (効率比ERによるトレンド補正)
+input double InpDriftThreshold = 0.20;                // トレンド認定効率比(ER)閾値 (推奨: 0.15〜0.25)
 
 //--- インディケータバッファ
 double AlphaBuffer[];
@@ -157,8 +159,8 @@ int OnInit() {
 
   string tfName = (InpTimeframe == PERIOD_CURRENT) ? EnumToString(_Period) : EnumToString(InpTimeframe);
   IndicatorSetString(INDICATOR_SHORTNAME,
-                     StringFormat("FastDFA(%s, N=%d, Smooth=%d, MaxBars=%d)",
-                                  tfName, InpDfaWindowSize, InpSmoothPeriod, InpMaxBarsToCalc));
+                     StringFormat("FastDFA(%s, N=%d, Smooth=%d, Drift=%s)",
+                                  tfName, InpDfaWindowSize, InpSmoothPeriod, (InpUseDriftFilter ? "ON" : "OFF")));
   IndicatorSetInteger(INDICATOR_DIGITS, 4);
 
   if (InpDfaWindowSize < 30) {
@@ -170,11 +172,13 @@ int OnInit() {
   if (InpTimeframe != PERIOD_CURRENT && InpTimeframe != _Period) {
     h_htfDfa = iCustom(_Symbol, InpTimeframe, "Hybrid_DFA_EA\\DFA", PERIOD_CURRENT,
                        InpDfaWindowSize, InpMinBoxSize, InpMaxBoxSize, InpMaxBarsToCalc,
-                       InpSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, InpScaleMargin);
+                       InpSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, InpScaleMargin,
+                       InpUseDriftFilter, InpDriftThreshold);
     if (h_htfDfa == INVALID_HANDLE) {
       h_htfDfa = iCustom(_Symbol, InpTimeframe, "Indicators\\Hybrid_DFA_EA\\DFA", PERIOD_CURRENT,
                          InpDfaWindowSize, InpMinBoxSize, InpMaxBoxSize, InpMaxBarsToCalc,
-                         InpSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, InpScaleMargin);
+                         InpSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, InpScaleMargin,
+                         InpUseDriftFilter, InpDriftThreshold);
     }
     if (h_htfDfa == INVALID_HANDLE) {
       PrintFormat("[DFA] 上位足 %s の内部DFAハンドル取得に失敗しました。", EnumToString(InpTimeframe));
@@ -197,8 +201,9 @@ int OnInit() {
   ArrayResize(g_Y, returnCount);
   PrecomputeScales(InpDfaWindowSize);
 
-  PrintFormat("[DFA] OnInit 実行完了: Timeframe=%s, N=%d, sMin=%d, sMax=%d, MaxBars=%d, Scales=%d",
-              tfName, InpDfaWindowSize, InpMinBoxSize, InpMaxBoxSize, InpMaxBarsToCalc, g_validScaleCount);
+  PrintFormat("[DFA] OnInit 実行完了: Timeframe=%s, N=%d, sMin=%d, sMax=%d, MaxBars=%d, Scales=%d, DriftFilter=%s",
+              tfName, InpDfaWindowSize, InpMinBoxSize, InpMaxBoxSize, InpMaxBarsToCalc, g_validScaleCount,
+              (InpUseDriftFilter ? "ON" : "OFF"));
 
   return INIT_SUCCEEDED;
 }
@@ -214,7 +219,7 @@ void OnDeinit(const int reason) {
 }
 
 //+------------------------------------------------------------------+
-//| 高速化された1バー地点での DFA Alpha 算出ルーチン (1パスSSR)       |
+//| 高速化された1バー地点での DFA Alpha 算出ルーチン (1パスSSR+ドリフト結合) |
 //+------------------------------------------------------------------+
 double FastCalculateDfaAlphaAtBar(const double &close[], const int barIdx) {
   int N = InpDfaWindowSize;
@@ -223,19 +228,25 @@ double FastCalculateDfaAlphaAtBar(const double &close[], const int barIdx) {
   int returnCount = N - 1;
   int startPos = barIdx - N + 1;
 
-  // 1. 対数リターンの計算とプロファイル系列の生成
+  // 1. 対数リターンの計算、プロファイル系列の生成、および効率比(ER)の集計
   double sumReturn = 0.0;
+  double sumAbsReturn = 0.0;
   for (int i = 0; i < returnCount; i++) {
     int prevPos = startPos + i;
     int currPos = startPos + i + 1;
-    if (close[prevPos] <= 0.0 || close[currPos] <= 0.0)
+    if (close[prevPos] <= 0.0 || close[currPos] <= 0.0) {
       g_returns[i] = 0.0;
-    else
+    } else {
       g_returns[i] = MathLog(close[currPos] / close[prevPos]);
+    }
 
     sumReturn += g_returns[i];
+    sumAbsReturn += MathAbs(g_returns[i]);
   }
   double meanReturn = sumReturn / (double)returnCount;
+
+  // カウフマン効率比 (ER)
+  double er = (sumAbsReturn > 1e-12) ? (MathAbs(sumReturn) / sumAbsReturn) : 0.0;
 
   double cumSum = 0.0;
   for (int i = 0; i < returnCount; i++) {
@@ -307,10 +318,31 @@ double FastCalculateDfaAlphaAtBar(const double &close[], const int barIdx) {
 
   double alpha = (g_validScaleCount * sumLogSF - g_sumLogS * sumLogF) / g_regDenomS;
 
-  if (MathIsValidNumber(alpha))
-    return alpha;
+  if (!MathIsValidNumber(alpha))
+    return 0.5;
 
-  return 0.5;
+  // 4. ドリフト結合型ハイブリッド補正 (Drift-Coupled Hybrid DFA)
+  if (InpUseDriftFilter) {
+    if (er >= InpDriftThreshold) {
+      // 強い方向性トレンド: ERに応じてalphaを上方へ (最大1.0)
+      double w = (1.0 - InpDriftThreshold > 1e-6) ? ((er - InpDriftThreshold) / (1.0 - InpDriftThreshold)) : 1.0;
+      if (w > 1.0) w = 1.0;
+      double baseAlpha = (alpha > 0.50) ? alpha : 0.50;
+      alpha = baseAlpha + w * (1.0 - baseAlpha);
+    } else {
+      if (alpha < 0.50) {
+        // 純粋なレンジ・平均回帰: 生のalphaをそのまま採用 (0.45未満のレンジ領域を維持)
+      } else {
+        // 方向感のない乱高下・大きなうねり (ER低 & DFA高):
+        // 偽トレンドを抑制し、ERの比率に応じて中立(0.50)へ減衰
+        double ratio = (InpDriftThreshold > 1e-6) ? (er / InpDriftThreshold) : 0.0;
+        if (ratio > 1.0) ratio = 1.0;
+        alpha = 0.50 + ratio * (alpha - 0.50);
+      }
+    }
+  }
+
+  return alpha;
 }
 
 //+------------------------------------------------------------------+
