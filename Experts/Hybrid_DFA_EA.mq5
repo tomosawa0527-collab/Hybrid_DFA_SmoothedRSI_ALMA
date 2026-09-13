@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Hybrid DFA System"
 #property link "https://www.mql5.com"
-#property version "1.00"
+#property version "1.50"
 
 #include "..\Include\Hybrid_DFA_EA\DFA_Common.mqh"
 #include <Trade\PositionInfo.mqh>
