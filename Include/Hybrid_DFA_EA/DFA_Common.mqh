@@ -104,6 +104,8 @@ struct SSystemState {
   double alma_fast_2;      // 前々バー 短期ALMA
   double alma_slow_1;      // 前バー 長期ALMA
   double alma_slow_2;      // 前々バー 長期ALMA
+  double alma_signal_1;    // 前バー ALMAシグナル状態 (+1.0: Bull, -1.0: Bear, 0.0: Neutral)
+  double alma_signal_2;    // 前々バー ALMAシグナル状態
   double atr;              // 最新ATR値
   ENUM_REGIME_TYPE regime; // 判定レジーム
 };
