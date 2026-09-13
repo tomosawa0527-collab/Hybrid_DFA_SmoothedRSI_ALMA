@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|                                                     DualALMA.mq5 |
+//|                                                  MultiDualMA.mq5 |
 //|                                  Copyright 2026, Hybrid DFA Quant |
 //|                                             https://www.mql5.com |
 //+------------------------------------------------------------------+
@@ -144,28 +144,28 @@ int OnInit() {
     }
 
     IndicatorSetString(INDICATOR_SHORTNAME,
-                       StringFormat("DualMA(%s, Fast=%d, Slow=%d, ST=%s)",
+                       StringFormat("MultiDualMA(%s, Fast=%d, Slow=%d, ST=%s)",
                                     maTypeName, InpAlmaFastWindow, InpAlmaSlowWindow,
                                     InpUseSchmittTrigger ? "ON" : "OFF"));
     IndicatorSetInteger(INDICATOR_DIGITS, _Digits);
 
-    PlotIndexSetString(0, PLOT_LABEL, StringFormat("Dual %s Fast(%d)", maTypeName, InpAlmaFastWindow));
-    PlotIndexSetString(1, PLOT_LABEL, StringFormat("Dual %s Slow(%d)", maTypeName, InpAlmaSlowWindow));
+    PlotIndexSetString(0, PLOT_LABEL, StringFormat("MultiDual %s Fast(%d)", maTypeName, InpAlmaFastWindow));
+    PlotIndexSetString(1, PLOT_LABEL, StringFormat("MultiDual %s Slow(%d)", maTypeName, InpAlmaSlowWindow));
 
-    PrintFormat("[DualMA] OnInit: Type=%s, Fast=%d, Slow=%d, Price=%d, SS=%s, ZL=%s, ST=%s(HFactor=%.4f)",
+    PrintFormat("[MultiDualMA] OnInit: Type=%s, Fast=%d, Slow=%d, Price=%d, SS=%s, ZL=%s, ST=%s(HFactor=%.4f)",
                 maTypeName, InpAlmaFastWindow, InpAlmaSlowWindow, (int)InpAppliedPrice,
                 InpUseSuperSmoother ? "ON" : "OFF",
                 InpUseZeroLagLead ? "ON" : "OFF",
                 InpUseSchmittTrigger ? "ON" : "OFF", InpHysteresisFactor);
 
     if (InpAlmaFastWindow < 2 || InpAlmaSlowWindow <= InpAlmaFastWindow) {
-        PrintFormat("[DualMA] 初期化エラー: 窓幅設定が不正です (Fast=%d, Slow=%d: Fast >= 2 かつ Slow > Fast である必要があります)。",
+        PrintFormat("[MultiDualMA] 初期化エラー: 窓幅設定が不正です (Fast=%d, Slow=%d: Fast >= 2 かつ Slow > Fast である必要があります)。",
                     InpAlmaFastWindow, InpAlmaSlowWindow);
         return INIT_PARAMETERS_INCORRECT;
     }
 
     if (InpSSCutoff < 2 || InpHysteresisAtrPeriod < 1 || InpLeadFactor < 0.0) {
-        PrintFormat("[DualMA] 初期化エラー: パラメータ設定が不正です (SSCutoff=%d, HysteresisAtrPeriod=%d, LeadFactor=%.2f)。",
+        PrintFormat("[MultiDualMA] 初期化エラー: パラメータ設定が不正です (SSCutoff=%d, HysteresisAtrPeriod=%d, LeadFactor=%.2f)。",
                     InpSSCutoff, InpHysteresisAtrPeriod, InpLeadFactor);
         return INIT_PARAMETERS_INCORRECT;
     }
@@ -181,7 +181,7 @@ int OnInit() {
     if (InpTrendMaType == TREND_MA_SMA || InpTrendMaType == TREND_MA_LWMA || InpTrendMaType == TREND_MA_ALMA) {
         if (!CalculateMaWeights(InpTrendMaType, InpAlmaFastWindow, InpAlmaFastOffset, InpAlmaFastSigma, wFast, sumWFast) ||
             !CalculateMaWeights(InpTrendMaType, InpAlmaSlowWindow, InpAlmaSlowOffset, InpAlmaSlowSigma, wSlow, sumWSlow)) {
-            Print("[DualMA] 初期化エラー: 重み係数計算に失敗しました。");
+            Print("[MultiDualMA] 初期化エラー: 重み係数計算に失敗しました。");
             return INIT_PARAMETERS_INCORRECT;
         }
     }

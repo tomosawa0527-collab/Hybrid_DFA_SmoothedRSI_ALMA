@@ -1,6 +1,6 @@
-# Hybrid DFA & Smoothed RSI / Dual ALMA Trading System
+# Hybrid DFA & Smoothed RSI / Multi Dual MA Trading System
 
-MetaTrader 5 (MQL5) 向けに開発された、物理学・時系列解析の理論に基づく**DFA（トレンド除去変動解析）**による相場レジーム判別と、**Super Smoother RSI** および **Dual ALMA** を組み合わせた高堅牢ハイブリッド自動売買システム（EA）です。
+MetaTrader 5 (MQL5) 向けに開発された、物理学・時系列解析の理論に基づく**DFA（トレンド除去変動解析）**による相場レジーム判別と、**Super Smoother RSI** および **Multi Dual MA** を組み合わせた高堅牢ハイブリッド自動売買システム（EA）です。
 
 ---
 
@@ -17,10 +17,10 @@ graph TD
     DFA -->|Alpha > High (青)| TrendMode[トレンド相場モード]
     
     RangeMode --> SmoothedRSI[SmoothedRSI.mq5<br/>Super Smoother + RSI<br/>ゾーン脱出逆張りエントリー]
-    TrendMode --> DualALMA[DualALMA.mq5<br/>Fast/Slow ALMA Cross<br/>ゴールデン/デッドクロス順張り]
+    TrendMode --> MultiDualMA[MultiDualMA.mq5<br/>Fast/Slow MA Cross<br/>ゴールデン/デッドクロス順張り]
     
     SmoothedRSI --> EA[Hybrid_DFA_EA.mq5<br/>ポジション管理 & ATR動的決済]
-    DualALMA --> EA
+    MultiDualMA --> EA
 ```
 
 ---
@@ -37,7 +37,7 @@ graph TD
 │   └── Hybrid_DFA_EA/
 │       ├── DFA.mq5               # 双方向DFAレジーム判別インディケータ (静的バッファ最適化済み)
 │       ├── SmoothedRSI.mq5       # 2-Pole Super Smoother 平滑化RSI
-│       └── DualALMA.mq5          # デュアル・アーナウドレグー移動平均線
+│       └── MultiDualMA.mq5       # マルチタイプ対応デュアル移動平均線 (SMA/EMA/SMMA/LWMA/ALMA)
 └── docs/
     ├── 20260822_2_DFA-Smoother ハイブリッド高堅牢化取引システム 仕様書（改訂版）.md
     └── 20260901_MQL5 EA Implementation Review.md
@@ -93,13 +93,13 @@ graph TD
 
 ---
 
-### 3.3 Robust Dual ALMA インディケータ (`DualALMA.mq5`)
+### 3.3 Multi Dual MA インディケータ (`MultiDualMA.mq5`)
 
-信号処理工学（DSP）とATR連動シュミットトリガーを統合した超低遅延・高S/N比トレンドフォローフィルターです。ALMA 本体のガウス分布重心パラメータ（Offset）の最適化（Fast: 0.92, Slow: 0.90）により、**前処理フィルタによる余分な群遅延を生じさせることなく、旧DualALMAよりも 1〜1.5バー早期の反転検知**を実現しています。
+SMA / EMA / SMMA / LWMA / ALMA の5種類の移動平均アルゴリズムを統合し、信号処理工学（DSP）とATR連動シュミットトリガーを備えた高機能トレンドフォローフィルターです。すべてのMAタイプにおいて、Fast（短期: `clrOrangeRed` / オレンジ赤）とSlow（長期: `clrDeepSkyBlue` / 水色）の2色で統一描画されます。ALMA 選択時はガウス分布重心パラメータ（Offset: Fast 0.92, Slow 0.90）の最適化により、極めて低遅延・高平滑な追従を実現します。
 
 ```mermaid
 flowchart LR
-    A["原価格 P_t"] --> B["Dual ALMA<br/>(高Offset固定ガウス重み: Fast 0.92 / Slow 0.90)"]
+    A["原価格 P_t"] --> B["Multi Dual MA<br/>(SMA / EMA / SMMA / LWMA / ALMA)"]
     B --> C["Schmitt Trigger<br/>(ATR動的ヒステリシス: Factor 0.08)"]
     C --> D["SignalState バッファ<br/>(+1.0: Bull / -1.0: Bear)"]
 ```
@@ -200,7 +200,7 @@ flowchart LR
    - MetaEditor で以下のファイルを順次開き、**F7** キーでコンパイルします：
      1. `Indicators/Hybrid_DFA_EA/DFA.mq5`
      2. `Indicators/Hybrid_DFA_EA/SmoothedRSI.mq5`
-     3. `Indicators/Hybrid_DFA_EA/DualALMA.mq5`
+     3. `Indicators/Hybrid_DFA_EA/MultiDualMA.mq5`
      4. `Experts/Hybrid_DFA_EA.mq5`
 3. **バックテスト実行**:
    - MT5 のストラテジーテスターを開き、`Hybrid_DFA_EA` を選択してバックテストを実行します。
@@ -212,16 +212,15 @@ flowchart LR
 ## 6. 改訂履歴 (Changelog)
 
 ### [v1.7.0] - 2026-09-13
-- **トレンド戦略における MA タイプ選択機能の実装 (`DFA_Common.mqh`, `Hybrid_DFA_EA.mq5`)**:
-  - **移動平均種別列挙体 `ENUM_TREND_MA_TYPE` の導入**:
-    - `TREND_MA_SMA` (単純移動平均: iMA 高PF・推奨)
-    - `TREND_MA_EMA` (指数平滑移動平均: iMA 低ダマシ・推奨)
-    - `TREND_MA_SMMA` (平滑移動平均: iMA)
-    - `TREND_MA_LWMA` (線形加重移動平均: iMA)
-    - `TREND_MA_ALMA` (Arnaud Legoux 移動平均: DualALMA.mq5)
-  - **MT5組み込み MA による超高速・低負荷動作**:
-    - SMA/EMA/SMMA/LWMA 選択時は MT5 ネイティブの `iMA` ハンドルを透過的に生成し、CPU負荷を最小化。
-    - パラメータ画面からワンクリックで MA タイプを切り替え可能とし、実運用やバックテストでの客観的比較検証を容易化。
+- **トレンドインジケータの MultiDualMA 化とMAタイプ選択・カラー統一 (`MultiDualMA.mq5`, `DFA_Common.mqh`, `Hybrid_DFA_EA.mq5`)**:
+  - **インジケータ名称を `MultiDualMA.mq5` に刷新**:
+    - ALMA 専従から 5 種類の移動平均に対応する汎用トレンドインジケータへ進化させたことに伴い、`DualALMA.mq5` から `MultiDualMA.mq5` へ改名。
+  - **全MAタイプでの2色プロット統一（赤/水色）**:
+    - MT5ネイティブ `iMA` で発生していた「両線とも赤線でテスター/チャートで見分けがつかない」問題を完全解消。
+    - `MultiDualMA.mq5` 側で SMA / EMA / SMMA / LWMA（FIR畳み込み & 再帰差分）および ALMA の全計算ロジックを統合。どのMAタイプを選択しても **Fast線: `clrOrangeRed` (オレンジ赤)**、**Slow線: `clrDeepSkyBlue` (水色)** で美しく統一描画。
+  - **デフォルト戦略を LWMA (Fast=20, Slow=40) & ATR 20 に設定**:
+    - 長期バックテストで最も高い堅牢性とプロフィットファクターを示した LWMA (20/40) をトレンド戦略の標準設定に採用。
+    - 出口戦略側の ATR 期間も `20` をデフォルト値に更新。
 
 ### [v1.6.2] - 2026-09-13
 - **Dual ALMA 超低遅延・高平滑化アーキテクチャの確立 (`DualALMA.mq5`, `Hybrid_DFA_EA.mq5`)**:

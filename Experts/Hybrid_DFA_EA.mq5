@@ -75,7 +75,7 @@ CPositionInfo m_position;
 
 int h_dfa = INVALID_HANDLE;
 int h_smoothedRsi = INVALID_HANDLE;
-int h_dualAlma = INVALID_HANDLE;
+int h_multiDualMa = INVALID_HANDLE;
 int h_atr = INVALID_HANDLE;
 
 ENUM_TIMEFRAMES m_dfaTf = PERIOD_CURRENT;
@@ -141,7 +141,7 @@ int OnInit() {
     }
 
     // 3. トレンド戦略 MA インディケータハンドル取得 (チャート足: メインウィンドウ)
-    // ※ DualALMA インディケータが SMA/EMA/SMMA/LWMA/ALMA の全計算を内包し、
+    // ※ MultiDualMA インディケータが SMA/EMA/SMMA/LWMA/ALMA の全計算を内包し、
     //    Fast(clrOrangeRed: 赤/オレンジ) と Slow(clrDeepSkyBlue: 水色) の2色で全MAタイプ統一描画
     if (InpUseTrendStrategy) {
         string maTypeName = "LWMA";
@@ -157,8 +157,8 @@ int OnInit() {
                     maTypeName, InpMaFastWindow, InpMaSlowWindow, (int)InpMaAppliedPrice,
                     InpAlmaUseSchmittTrigger ? "ON" : "OFF", InpAlmaHysteresisFactor);
 
-        h_dualAlma =
-            iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DualALMA",
+        h_multiDualMa =
+            iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\MultiDualMA",
                     InpTrendMaType,
                     InpMaFastWindow, InpMaSlowWindow,
                     InpAlmaFastOffset, InpAlmaSlowOffset,
@@ -167,9 +167,9 @@ int OnInit() {
                     InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
                     InpAlmaUseZeroLagLead, InpAlmaLeadFactor,
                     InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
-        if (h_dualAlma == INVALID_HANDLE) {
-            h_dualAlma =
-                iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DualALMA",
+        if (h_multiDualMa == INVALID_HANDLE) {
+            h_multiDualMa =
+                iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\MultiDualMA",
                         InpTrendMaType,
                         InpMaFastWindow, InpMaSlowWindow,
                         InpAlmaFastOffset, InpAlmaSlowOffset,
@@ -179,8 +179,8 @@ int OnInit() {
                         InpAlmaUseZeroLagLead, InpAlmaLeadFactor,
                         InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
         }
-        if (h_dualAlma == INVALID_HANDLE) {
-            Print("[Hybrid_DFA_EA] DualMA インディケータのハンドル取得に失敗しました。");
+        if (h_multiDualMa == INVALID_HANDLE) {
+            Print("[Hybrid_DFA_EA] MultiDualMA インディケータのハンドル取得に失敗しました。");
             return INIT_FAILED;
         }
     }
@@ -215,8 +215,8 @@ void OnDeinit(const int reason) {
             IndicatorRelease(h_dfa);
         if (h_smoothedRsi != INVALID_HANDLE)
             IndicatorRelease(h_smoothedRsi);
-        if (h_dualAlma != INVALID_HANDLE)
-            IndicatorRelease(h_dualAlma);
+        if (h_multiDualMa != INVALID_HANDLE)
+            IndicatorRelease(h_multiDualMa);
         if (h_atr != INVALID_HANDLE)
             IndicatorRelease(h_atr);
     }
@@ -255,7 +255,7 @@ bool UpdateSystemState(SSystemState& state) {
     ZeroMemory(state);
     state.regime = REGIME_ALL;
 
-    // チャート足の Bar 1 時刻 (SmoothedRSI / DualALMA はチャート足基準で参照)
+    // チャート足の Bar 1 時刻 (SmoothedRSI / MultiDualMA はチャート足基準で参照)
     // ※ DFA / ATR は Phase 4 で各々上位足の iTime で個別取得に変更済み
     datetime bar1_time = iTime(_Symbol, _Period, 1);
 
@@ -305,15 +305,15 @@ bool UpdateSystemState(SSystemState& state) {
     }
 
     // 3. トレンド戦略 MA の取得 (バー1, バー2)
-    // ※ DualALMA インディケータが全MAタイプ（SMA/EMA/SMMA/LWMA/ALMA）の計算と2色描画を統一担当
-    if (InpUseTrendStrategy && h_dualAlma != INVALID_HANDLE) {
+    // ※ MultiDualMA インディケータが全MAタイプ（SMA/EMA/SMMA/LWMA/ALMA）の計算と2色描画を統一担当
+    if (InpUseTrendStrategy && h_multiDualMa != INVALID_HANDLE) {
         double fastBuf[], slowBuf[], sigBuf[];
         ArraySetAsSeries(fastBuf, true);
         ArraySetAsSeries(slowBuf, true);
         ArraySetAsSeries(sigBuf, true);
 
-        if (CopyBuffer(h_dualAlma, 0, 1, 2, fastBuf) == 2 &&
-            CopyBuffer(h_dualAlma, 1, 1, 2, slowBuf) == 2) {
+        if (CopyBuffer(h_multiDualMa, 0, 1, 2, fastBuf) == 2 &&
+            CopyBuffer(h_multiDualMa, 1, 1, 2, slowBuf) == 2) {
             state.alma_fast_1 = fastBuf[0];
             state.alma_fast_2 = fastBuf[1];
             state.alma_slow_1 = slowBuf[0];
@@ -323,7 +323,7 @@ bool UpdateSystemState(SSystemState& state) {
             return false;
         }
 
-        if (CopyBuffer(h_dualAlma, 3, 1, 2, sigBuf) == 2) {
+        if (CopyBuffer(h_multiDualMa, 3, 1, 2, sigBuf) == 2) {
             state.alma_signal_1 = sigBuf[0];
             state.alma_signal_2 = sigBuf[1];
         } else {
