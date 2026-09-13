@@ -166,23 +166,25 @@ flowchart LR
 | **`InpRsiPeriod`** | `7` | RSI 計算期間 |
 | **`InpRsiOverbought`** | `65.0` | 買われすぎ境界値 |
 | **`InpRsiOversold`** | `35.0` | 売られすぎ境界値 |
-| **`InpUseTrendStrategy`** | `true` | トレンド戦略 (Dual ALMA) の有効化 |
-| **`InpAlmaFastWindow`** | `9` | 短期 ALMA 窓幅 |
-| **`InpAlmaSlowWindow`** | `21` | 長期 ALMA 窓幅 |
-| **`InpAlmaFastOffset`** | `0.92` | 短期 ALMA Offset (高値ほど低遅延) |
-| **`InpAlmaSlowOffset`** | `0.90` | 長期 ALMA Offset (高値ほど低遅延) |
-| **`InpAlmaFastSigma`** | `5.5` | 短期 ALMA Sigma (ガウス幅) |
-| **`InpAlmaSlowSigma`** | `5.5` | 長期 ALMA Sigma (ガウス幅) |
-| **`InpAlmaUseSuperSmoother`** | `false` | SuperSmoother 前処理有効化 (低遅延重視時はOFF推奨) |
-| **`InpAlmaSSCutoff`** | `4` | SuperSmoother カットオフ周期 (bars) |
-| **`InpAlmaUseZeroLagLead`** | `false` | 先行モメンタム補正有効化 (スパイクゼロ低遅延) |
-| **`InpAlmaLeadFactor`** | `0.40` | 先行モメンタム係数 |
-| **`InpAlmaUseSchmittTrigger`**| `true` | シュミットトリガー (ATRヒステリシス) 有効化 |
-| **`InpAlmaHysteresisAtrPeriod`** | `14` | ヒステリシス用 ATR 計算期間 |
-| **`InpAlmaHysteresisFactor`** | `0.08` | ヒステリシス不感帯幅係数 ($\text{ATR} \times 0.08$) |
+| **`InpUseTrendStrategy`** | `true` | トレンド戦略 (Dual MA Cross) の有効化 |
+| **`InpTrendMaType`** | `TREND_MA_LWMA` | 移動平均タイプ (`SMA` / `EMA` / `SMMA` / `LWMA` / `ALMA`) |
+| **`InpMaFastWindow`** | `20` | 短期 MA 期間 / 窓幅 (Fast Window) |
+| **`InpMaSlowWindow`** | `40` | 長期 MA 期間 / 窓幅 (Slow Window) |
+| **`InpMaAppliedPrice`** | `PRICE_CLOSE` | 適用価格 |
+| **`InpAlmaFastOffset`** | `0.92` | [ALMA専用] 短期 Offset (高値ほど低遅延) |
+| **`InpAlmaSlowOffset`** | `0.90` | [ALMA専用] 長期 Offset (高値ほど低遅延) |
+| **`InpAlmaFastSigma`** | `5.5` | [ALMA専用] 短期 Sigma (ガウス幅) |
+| **`InpAlmaSlowSigma`** | `5.5` | [ALMA専用] 長期 Sigma (ガウス幅) |
+| **`InpAlmaUseSuperSmoother`** | `false` | [ALMA専用] SuperSmoother 前処理有効化 (OFF推奨) |
+| **`InpAlmaSSCutoff`** | `4` | [ALMA専用] SuperSmoother カットオフ周期 (bars) |
+| **`InpAlmaUseZeroLagLead`** | `false` | [ALMA専用] 先行モメンタム補正有効化 (スパイクゼロ低遅延) |
+| **`InpLeadFactor`** | `0.40` | [ALMA専用] 先行モメンタム係数 |
+| **`InpAlmaUseSchmittTrigger`**| `false` | [ALMA専用] シュミットトリガー (ATRヒステリシス) 有効化 |
+| **`InpAlmaHysteresisAtrPeriod`** | `14` | [ALMA専用] ヒステリシス用 ATR 計算期間 |
+| **`InpAlmaHysteresisFactor`** | `0.08` | [ALMA専用] ヒステリシス不感帯幅係数 ($\text{ATR} \times 0.08$) |
 | **`InpUseAtrExit`** | `true` | ATR ベース動的 TP/SL の有効化 |
 | **`InpAtrTimeframeMode`** | `HTF_MODE_AUTO_NEXT` | ATR 計算時間軸 (デフォルト: 自動1段階上位足) |
-| **`InpAtrPeriod`** | `14` | ATR 計算期間 |
+| **`InpAtrPeriod`** | `20` | ATR 計算期間 |
 | **`InpAtrTpFactor`** | `3.0` | ATR 利確乗数 ($\text{ATR} \times 3.0$。0指定時はTPなし＆SLトレーリングストップ) |
 | **`InpAtrSlFactor`** | `1.5` | ATR 損切乗数 ($\text{ATR} \times 1.5$) |
 
@@ -208,6 +210,18 @@ flowchart LR
 ---
 
 ## 6. 改訂履歴 (Changelog)
+
+### [v1.7.0] - 2026-09-13
+- **トレンド戦略における MA タイプ選択機能の実装 (`DFA_Common.mqh`, `Hybrid_DFA_EA.mq5`)**:
+  - **移動平均種別列挙体 `ENUM_TREND_MA_TYPE` の導入**:
+    - `TREND_MA_SMA` (単純移動平均: iMA 高PF・推奨)
+    - `TREND_MA_EMA` (指数平滑移動平均: iMA 低ダマシ・推奨)
+    - `TREND_MA_SMMA` (平滑移動平均: iMA)
+    - `TREND_MA_LWMA` (線形加重移動平均: iMA)
+    - `TREND_MA_ALMA` (Arnaud Legoux 移動平均: DualALMA.mq5)
+  - **MT5組み込み MA による超高速・低負荷動作**:
+    - SMA/EMA/SMMA/LWMA 選択時は MT5 ネイティブの `iMA` ハンドルを透過的に生成し、CPU負荷を最小化。
+    - パラメータ画面からワンクリックで MA タイプを切り替え可能とし、実運用やバックテストでの客観的比較検証を容易化。
 
 ### [v1.6.2] - 2026-09-13
 - **Dual ALMA 超低遅延・高平滑化アーキテクチャの確立 (`DualALMA.mq5`, `Hybrid_DFA_EA.mq5`)**:

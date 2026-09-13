@@ -24,7 +24,18 @@ enum ENUM_REGIME_TYPE {
 enum ENUM_STRATEGY_SOURCE {
   STRATEGY_NONE = 0,  // なし
   STRATEGY_RANGE = 1, // レンジ戦略 (Super Smoother + RSI) 由来
-  STRATEGY_TREND = 2  // トレンド戦略 (Dual ALMA) 由来
+  STRATEGY_TREND = 2  // トレンド戦略 (Dual MA) 由来
+};
+
+//+------------------------------------------------------------------+
+//| トレンド戦略 移動平均種別定義                                    |
+//+------------------------------------------------------------------+
+enum ENUM_TREND_MA_TYPE {
+  TREND_MA_SMA  = 0, // SMA (単純移動平均: 高PF・推奨)
+  TREND_MA_EMA  = 1, // EMA (指数平滑移動平均: 低ダマシ・推奨)
+  TREND_MA_SMMA = 2, // SMMA (平滑移動平均)
+  TREND_MA_LWMA = 3, // LWMA (線形加重移動平均)
+  TREND_MA_ALMA = 4  // ALMA (Arnaud Legoux 移動平均: DualALMA)
 };
 
 //+------------------------------------------------------------------+

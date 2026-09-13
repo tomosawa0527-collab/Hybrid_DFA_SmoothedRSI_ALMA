@@ -5,46 +5,55 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Hybrid DFA Quant"
 #property link "https://www.mql5.com"
-#property version "2.20"
+#property version "2.30"
 #property indicator_chart_window
 #property indicator_buffers 5
 #property indicator_plots 2
 
-//--- プロット定義
-#property indicator_label1 "Robust ALMA Fast"
+//--- プロット定義 (Fast: オレンジ赤, Slow: 水色 で全MAタイプ統一描画)
+#property indicator_label1 "Dual MA Fast"
 #property indicator_type1 DRAW_LINE
 #property indicator_color1 clrOrangeRed
 #property indicator_style1 STYLE_SOLID
 #property indicator_width1 2
 
-#property indicator_label2 "Robust ALMA Slow"
+#property indicator_label2 "Dual MA Slow"
 #property indicator_type2 DRAW_LINE
 #property indicator_color2 clrDeepSkyBlue
 #property indicator_style2 STYLE_SOLID
 #property indicator_width2 2
 
+//--- 移動平均種別定義
+enum ENUM_TREND_MA_TYPE {
+  TREND_MA_SMA  = 0, // SMA (単純移動平均)
+  TREND_MA_EMA  = 1, // EMA (指数平滑移動平均)
+  TREND_MA_SMMA = 2, // SMMA (平滑移動平均)
+  TREND_MA_LWMA = 3, // LWMA (線形加重移動平均)
+  TREND_MA_ALMA = 4  // ALMA (Arnaud Legoux 移動平均)
+};
+
 //--- 入力パラメータ
-//--- ALMA Core Settings (低遅延・高平滑設計)
-input int InpAlmaFastWindow = 9;                        // 短期窓幅 (Fast Window)
-input int InpAlmaSlowWindow = 21;                       // 長期窓幅 (Slow Window)
-input double InpAlmaFastOffset = 0.92;                  // 短期 Offset (0.0〜1.0: 高値ほど低遅延)
-input double InpAlmaSlowOffset = 0.90;                  // 長期 Offset (0.0〜1.0: 高値ほど低遅延)
-input double InpAlmaFastSigma = 5.5;                    // 短期 Sigma (1.0〜10.0)
-input double InpAlmaSlowSigma = 5.5;                    // 長期 Sigma (1.0〜10.0)
-input ENUM_APPLIED_PRICE InpAppliedPrice = PRICE_CLOSE; // 適用価格
+input ENUM_TREND_MA_TYPE InpTrendMaType = TREND_MA_LWMA; // 移動平均タイプ (SMA/EMA/SMMA/LWMA/ALMA)
+input int InpAlmaFastWindow = 20;                        // 短期期間 / 窓幅 (Fast Window)
+input int InpAlmaSlowWindow = 40;                        // 長期期間 / 窓幅 (Slow Window)
+input double InpAlmaFastOffset = 0.92;                   // [ALMA専用] 短期 Offset (0.0〜1.0)
+input double InpAlmaSlowOffset = 0.90;                   // [ALMA専用] 長期 Offset (0.0〜1.0)
+input double InpAlmaFastSigma = 5.5;                     // [ALMA専用] 短期 Sigma (1.0〜10.0)
+input double InpAlmaSlowSigma = 5.5;                     // [ALMA専用] 長期 Sigma (1.0〜10.0)
+input ENUM_APPLIED_PRICE InpAppliedPrice = PRICE_CLOSE;  // 適用価格
 
 //--- DSP Optional Pre-Filter (Noise Cut: 低遅延重視時はOFF推奨)
-input bool InpUseSuperSmoother = false;                 // 2-Pole SuperSmoother有効化 (OFF推奨)
-input int InpSSCutoff = 4;                              // 高周波カットオフ周期 (bars: 4推奨)
+input bool InpUseSuperSmoother = false;                  // 2-Pole SuperSmoother有効化 (OFF推奨)
+input int InpSSCutoff = 4;                               // 高周波カットオフ周期 (bars: 4推奨)
 
 //--- Zero-Lag Momentum Feedforward (先行価格補正: スパイクゼロの低遅延化)
-input bool InpUseZeroLagLead = false;                   // 先行モメンタム補正有効化
-input double InpLeadFactor = 0.40;                      // 先行モメンタム係数 (0.1〜1.0)
+input bool InpUseZeroLagLead = false;                    // 先行モメンタム補正有効化
+input double InpLeadFactor = 0.40;                       // 先行モメンタム係数 (0.1〜1.0)
 
 //--- Schmitt Trigger (Hysteresis)
-input bool InpUseSchmittTrigger = true;                 // ATR連動シュミットトリガー有効化
-input int InpHysteresisAtrPeriod = 14;                  // ヒステリシス用ATR期間
-input double InpHysteresisFactor = 0.08;                // 不感帯幅係数 (ATR比率: 0.08 = 8% of ATR)
+input bool InpUseSchmittTrigger = false;                 // ATR連動シュミットトリガー有効化
+input int InpHysteresisAtrPeriod = 20;                   // ヒステリシス用ATR期間
+input double InpHysteresisFactor = 0.08;                 // 不感帯幅係数 (ATR比率: 0.08 = 8% of ATR)
 
 //--- インジケータバッファ
 double BufferFast[];
@@ -61,25 +70,46 @@ double wSlow[];
 double sumWSlow;
 
 //+------------------------------------------------------------------+
-//| ALMA 重み係数の事前計算 (k=0 が最新バー、k=window-1 が最古バー)   |
+//| 移動平均 重み係数の事前計算 (SMA / LWMA / ALMA 対応)             |
 //+------------------------------------------------------------------+
-bool CalculateWeights(const int window, const double offset, const double sigma,
-                      double &weights[], double &sumWeight) {
-    if (window < 1 || sigma <= 0.0)
+bool CalculateMaWeights(const ENUM_TREND_MA_TYPE type, const int window,
+                        const double offset, const double sigma,
+                        double &weights[], double &sumWeight) {
+    if (window < 1)
         return false;
 
     ArrayResize(weights, window);
     sumWeight = 0.0;
 
-    double clpOffset = MathMin(MathMax(offset, 0.0), 1.0);
-    double m = (1.0 - clpOffset) * (double)(window - 1);
-    double s = (double)window / sigma;
-    double two_s_sq = 2.0 * s * s;
+    switch (type) {
+    case TREND_MA_SMA:
+        for (int k = 0; k < window; k++) {
+            weights[k] = 1.0;
+            sumWeight += 1.0;
+        }
+        break;
 
-    for (int k = 0; k < window; k++) {
-        double diff = (double)k - m;
-        weights[k] = MathExp(-(diff * diff) / two_s_sq);
-        sumWeight += weights[k];
+    case TREND_MA_LWMA:
+        for (int k = 0; k < window; k++) {
+            weights[k] = (double)(window - k);
+            sumWeight += weights[k];
+        }
+        break;
+
+    case TREND_MA_ALMA:
+    default: {
+        if (sigma <= 0.0) return false;
+        double clpOffset = MathMin(MathMax(offset, 0.0), 1.0);
+        double m = (1.0 - clpOffset) * (double)(window - 1);
+        double s = (double)window / sigma;
+        double two_s_sq = 2.0 * s * s;
+        for (int k = 0; k < window; k++) {
+            double diff = (double)k - m;
+            weights[k] = MathExp(-(diff * diff) / two_s_sq);
+            sumWeight += weights[k];
+        }
+        break;
+    }
     }
 
     return (sumWeight > 0.0);
@@ -104,31 +134,38 @@ int OnInit() {
     PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE);
     PlotIndexSetDouble(1, PLOT_EMPTY_VALUE, EMPTY_VALUE);
 
+    string maTypeName = "LWMA";
+    switch (InpTrendMaType) {
+    case TREND_MA_SMA:  maTypeName = "SMA";  break;
+    case TREND_MA_EMA:  maTypeName = "EMA";  break;
+    case TREND_MA_SMMA: maTypeName = "SMMA"; break;
+    case TREND_MA_LWMA: maTypeName = "LWMA"; break;
+    case TREND_MA_ALMA: maTypeName = "ALMA"; break;
+    }
+
     IndicatorSetString(INDICATOR_SHORTNAME,
-                       StringFormat("RobustDualALMA(Fast=%d, Slow=%d, FastOff=%.2f, SlowOff=%.2f, SS=%s, ZL=%s, ST=%s)",
-                                    InpAlmaFastWindow, InpAlmaSlowWindow,
-                                    InpAlmaFastOffset, InpAlmaSlowOffset,
-                                    InpUseSuperSmoother ? "ON" : "OFF",
-                                    InpUseZeroLagLead ? "ON" : "OFF",
+                       StringFormat("DualMA(%s, Fast=%d, Slow=%d, ST=%s)",
+                                    maTypeName, InpAlmaFastWindow, InpAlmaSlowWindow,
                                     InpUseSchmittTrigger ? "ON" : "OFF"));
     IndicatorSetInteger(INDICATOR_DIGITS, _Digits);
 
-    PrintFormat("[RobustDualALMA] OnInit: Fast=%d(Off=%.2f,Sig=%.1f), Slow=%d(Off=%.2f,Sig=%.1f), Price=%d, SS=%s(Cutoff=%d), ZL=%s(Factor=%.2f), ST=%s(ATRPeriod=%d, HFactor=%.4f)",
-                InpAlmaFastWindow, InpAlmaFastOffset, InpAlmaFastSigma,
-                InpAlmaSlowWindow, InpAlmaSlowOffset, InpAlmaSlowSigma,
-                (int)InpAppliedPrice,
-                InpUseSuperSmoother ? "ON" : "OFF", InpSSCutoff,
-                InpUseZeroLagLead ? "ON" : "OFF", InpLeadFactor,
-                InpUseSchmittTrigger ? "ON" : "OFF", InpHysteresisAtrPeriod, InpHysteresisFactor);
+    PlotIndexSetString(0, PLOT_LABEL, StringFormat("Dual %s Fast(%d)", maTypeName, InpAlmaFastWindow));
+    PlotIndexSetString(1, PLOT_LABEL, StringFormat("Dual %s Slow(%d)", maTypeName, InpAlmaSlowWindow));
+
+    PrintFormat("[DualMA] OnInit: Type=%s, Fast=%d, Slow=%d, Price=%d, SS=%s, ZL=%s, ST=%s(HFactor=%.4f)",
+                maTypeName, InpAlmaFastWindow, InpAlmaSlowWindow, (int)InpAppliedPrice,
+                InpUseSuperSmoother ? "ON" : "OFF",
+                InpUseZeroLagLead ? "ON" : "OFF",
+                InpUseSchmittTrigger ? "ON" : "OFF", InpHysteresisFactor);
 
     if (InpAlmaFastWindow < 2 || InpAlmaSlowWindow <= InpAlmaFastWindow) {
-        PrintFormat("[RobustDualALMA] 初期化エラー: 窓幅設定が不正です (Fast=%d, Slow=%d: Fast >= 2 かつ Slow > Fast である必要があります)。",
+        PrintFormat("[DualMA] 初期化エラー: 窓幅設定が不正です (Fast=%d, Slow=%d: Fast >= 2 かつ Slow > Fast である必要があります)。",
                     InpAlmaFastWindow, InpAlmaSlowWindow);
         return INIT_PARAMETERS_INCORRECT;
     }
 
     if (InpSSCutoff < 2 || InpHysteresisAtrPeriod < 1 || InpLeadFactor < 0.0) {
-        PrintFormat("[RobustDualALMA] 初期化エラー: パラメータ設定が不正です (SSCutoff=%d, HysteresisAtrPeriod=%d, LeadFactor=%.2f)。",
+        PrintFormat("[DualMA] 初期化エラー: パラメータ設定が不正です (SSCutoff=%d, HysteresisAtrPeriod=%d, LeadFactor=%.2f)。",
                     InpSSCutoff, InpHysteresisAtrPeriod, InpLeadFactor);
         return INIT_PARAMETERS_INCORRECT;
     }
@@ -140,11 +177,13 @@ int OnInit() {
     ss_c3 = -ss_a1 * ss_a1;
     ss_c1 = 1.0 - ss_c2 - ss_c3;
 
-    // 2. 固定 ALMA 重み係数事前計算 (Fast/Slow それぞれ個別に最適オフセット・シグマで計算)
-    if (!CalculateWeights(InpAlmaFastWindow, InpAlmaFastOffset, InpAlmaFastSigma, wFast, sumWFast) ||
-        !CalculateWeights(InpAlmaSlowWindow, InpAlmaSlowOffset, InpAlmaSlowSigma, wSlow, sumWSlow)) {
-        Print("[RobustDualALMA] 初期化エラー: 重み係数計算に失敗しました。");
-        return INIT_PARAMETERS_INCORRECT;
+    // 2. 移動平均重み係数事前計算 (SMA, LWMA, ALMA)
+    if (InpTrendMaType == TREND_MA_SMA || InpTrendMaType == TREND_MA_LWMA || InpTrendMaType == TREND_MA_ALMA) {
+        if (!CalculateMaWeights(InpTrendMaType, InpAlmaFastWindow, InpAlmaFastOffset, InpAlmaFastSigma, wFast, sumWFast) ||
+            !CalculateMaWeights(InpTrendMaType, InpAlmaSlowWindow, InpAlmaSlowOffset, InpAlmaSlowSigma, wSlow, sumWSlow)) {
+            Print("[DualMA] 初期化エラー: 重み係数計算に失敗しました。");
+            return INIT_PARAMETERS_INCORRECT;
+        }
     }
 
     return INIT_SUCCEEDED;
@@ -207,6 +246,10 @@ int OnCalculate(const int rates_total, const int prev_calculated,
         start = InpAlmaSlowWindow - 1;
     }
 
+    // EMA用平滑化係数
+    double aFast = 2.0 / (double)(InpAlmaFastWindow + 1);
+    double aSlow = 2.0 / (double)(InpAlmaSlowWindow + 1);
+
     for (int i = start; i < rates_total; i++) {
         double rawPrice = GetAppliedPrice(i, open, high, low, close);
 
@@ -224,7 +267,6 @@ int OnCalculate(const int rates_total, const int prev_calculated,
         }
 
         // 2. 先行モメンタム補正 (Zero-Lag Feedforward: オプション)
-        // 入力価格側に微小なモメンタムを加算し、後段のガウス積分でノイズを平滑化するためスパイクゼロ
         if (InpUseZeroLagLead && i >= 1) {
             double prevP = GetAppliedPrice(i - 1, open, high, low, close);
             clean = clean + InpLeadFactor * (clean - prevP);
@@ -232,21 +274,46 @@ int OnCalculate(const int rates_total, const int prev_calculated,
 
         BufferPreFiltered[i] = clean;
 
-        // 3. 最適重みによる Fast ALMA 畳み込み演算 (Offset 0.92: 高速立ち上がり・スパイクゼロ)
-        double fastSum = 0.0;
-        for (int k = 0; k < InpAlmaFastWindow; k++) {
-            fastSum += BufferPreFiltered[i - k] * wFast[k];
-        }
-        BufferFast[i] = fastSum / sumWFast;
+        // 3. 移動平均計算 (SMA / EMA / SMMA / LWMA / ALMA)
+        // 常に Fast=BufferFast (clrOrangeRed), Slow=BufferSlow (clrDeepSkyBlue) で描画
+        if (InpTrendMaType == TREND_MA_EMA) {
+            if (i == InpAlmaSlowWindow - 1) {
+                double fSum = 0, sSum = 0;
+                for (int k = 0; k < InpAlmaFastWindow; k++) fSum += BufferPreFiltered[i - k];
+                for (int k = 0; k < InpAlmaSlowWindow; k++) sSum += BufferPreFiltered[i - k];
+                BufferFast[i] = fSum / (double)InpAlmaFastWindow;
+                BufferSlow[i] = sSum / (double)InpAlmaSlowWindow;
+            } else {
+                BufferFast[i] = aFast * BufferPreFiltered[i] + (1.0 - aFast) * BufferFast[i - 1];
+                BufferSlow[i] = aSlow * BufferPreFiltered[i] + (1.0 - aSlow) * BufferSlow[i - 1];
+            }
+        } else if (InpTrendMaType == TREND_MA_SMMA) {
+            if (i == InpAlmaSlowWindow - 1) {
+                double fSum = 0, sSum = 0;
+                for (int k = 0; k < InpAlmaFastWindow; k++) fSum += BufferPreFiltered[i - k];
+                for (int k = 0; k < InpAlmaSlowWindow; k++) sSum += BufferPreFiltered[i - k];
+                BufferFast[i] = fSum / (double)InpAlmaFastWindow;
+                BufferSlow[i] = sSum / (double)InpAlmaSlowWindow;
+            } else {
+                BufferFast[i] = (BufferFast[i - 1] * (InpAlmaFastWindow - 1) + BufferPreFiltered[i]) / (double)InpAlmaFastWindow;
+                BufferSlow[i] = (BufferSlow[i - 1] * (InpAlmaSlowWindow - 1) + BufferPreFiltered[i]) / (double)InpAlmaSlowWindow;
+            }
+        } else {
+            // FIR型 (SMA, LWMA, ALMA): 事前計算された重み配列で畳み込み
+            double fastSum = 0.0;
+            for (int k = 0; k < InpAlmaFastWindow; k++) {
+                fastSum += BufferPreFiltered[i - k] * wFast[k];
+            }
+            BufferFast[i] = fastSum / sumWFast;
 
-        // 4. 最適重みによる Slow ALMA 畳み込み演算 (Offset 0.90: 高速追従・スパイクゼロ)
-        double slowSum = 0.0;
-        for (int k = 0; k < InpAlmaSlowWindow; k++) {
-            slowSum += BufferPreFiltered[i - k] * wSlow[k];
+            double slowSum = 0.0;
+            for (int k = 0; k < InpAlmaSlowWindow; k++) {
+                slowSum += BufferPreFiltered[i - k] * wSlow[k];
+            }
+            BufferSlow[i] = slowSum / sumWSlow;
         }
-        BufferSlow[i] = slowSum / sumWSlow;
 
-        // 5. True Range & ATR 計算 (ヒステリシス不感帯用)
+        // 4. True Range & ATR 計算
         double tr = high[i] - low[i];
         if (i > 0) {
             double tr1 = MathAbs(high[i] - close[i - 1]);
@@ -263,19 +330,25 @@ int OnCalculate(const int rates_total, const int prev_calculated,
         }
         BufferATR[i] = curAtr;
 
-        // 6. シュミットトリガーによるヒステリシス状態ラッチ (ダマシ・チャタリング完全防止)
+        // 5. シグナル状態判定 (シュミットトリガーまたは直接クロス)
         double diff = BufferFast[i] - BufferSlow[i];
-        double h_band = 0.0;
         if (InpUseSchmittTrigger) {
-            h_band = curAtr * InpHysteresisFactor;
-        }
-
-        if (diff > h_band) {
-            BufferSignalState[i] = 1.0; // Bullish (買い優勢)
-        } else if (diff < -h_band) {
-            BufferSignalState[i] = -1.0; // Bearish (売り優勢)
+            double h_band = curAtr * InpHysteresisFactor;
+            if (diff > h_band) {
+                BufferSignalState[i] = 1.0;
+            } else if (diff < -h_band) {
+                BufferSignalState[i] = -1.0;
+            } else {
+                BufferSignalState[i] = (i > 0) ? BufferSignalState[i - 1] : 0.0;
+            }
         } else {
-            BufferSignalState[i] = (i > 0) ? BufferSignalState[i - 1] : 0.0; // 不感帯内は直前状態を維持
+            if (diff > 0.0) {
+                BufferSignalState[i] = 1.0;
+            } else if (diff < 0.0) {
+                BufferSignalState[i] = -1.0;
+            } else {
+                BufferSignalState[i] = (i > 0) ? BufferSignalState[i - 1] : 0.0;
+            }
         }
     }
 
