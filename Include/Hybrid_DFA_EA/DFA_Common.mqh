@@ -216,40 +216,58 @@ double CalculateLotSize(const string symbol, const double riskPercent,
 }
 
 //+------------------------------------------------------------------+
-//| ヒステリシス付きレジーム状態遷移 (Phase 3)                      |
-//| 既存の ThresholdLow / ThresholdHigh をヒステリシスバンドとして使用  |
-//| 一度確定したレジームを覆すには反対側の閾値を超える必要がある  |
+//| レジーム直接判定関数 (新規エントリー判定用)                      |
+//| α > thresholdHigh  => TREND                                      |
+//| α < thresholdLow   => RANGE                                      |
+//| その他 (不感帯)    => TRANSITION (静観)                          |
+//+------------------------------------------------------------------+
+ENUM_REGIME_TYPE DetermineRegime(
+    const double alpha,
+    const double thresholdLow,
+    const double thresholdHigh) {
+
+  if (!MathIsValidNumber(alpha) || alpha == EMPTY_VALUE)
+    return REGIME_TRANSITION;
+
+  if (alpha > thresholdHigh)
+    return REGIME_TREND;
+  if (alpha < thresholdLow)
+    return REGIME_RANGE;
+
+  return REGIME_TRANSITION;
+}
+
+//+------------------------------------------------------------------+
+//| レジーム逆行決済判定関数 (0.50 基準線クロス判定)                 |
+//| 一度エントリーしたポジションは0.50の中央基準線を跨ぐまでホールド   |
+//+------------------------------------------------------------------+
+bool ShouldCloseRegimePosition(
+    const ENUM_STRATEGY_SOURCE source,
+    const double alpha,
+    const double centerLine = 0.50) {
+
+  if (!MathIsValidNumber(alpha) || alpha == EMPTY_VALUE)
+    return false;
+
+  if (source == STRATEGY_TREND) {
+    // トレンドポジション: α が 0.50 を下回ったら決済 (0.50以上なら不感帯でもホールド)
+    return (alpha < centerLine);
+  } else if (source == STRATEGY_RANGE) {
+    // レンジポジション: α が 0.50 を上回ったら決済 (0.50以下なら不感帯でもホールド)
+    return (alpha > centerLine);
+  }
+
+  return false;
+}
+
+//+------------------------------------------------------------------+
+//| 後方互換用: レジーム判定関数 (新規エントリー判定)                |
 //+------------------------------------------------------------------+
 ENUM_REGIME_TYPE UpdateRegimeWithHysteresis(
     const ENUM_REGIME_TYPE prevRegime,
     const double alpha,
     const double thresholdLow,
     const double thresholdHigh) {
-
-  switch (prevRegime) {
-    case REGIME_RANGE:
-      // RANGE → TREND: α が ThresholdHigh を超えて初めて遷移
-      if (alpha > thresholdHigh)
-        return REGIME_TREND;
-      // RANGE → TRANSITION: α が不感帯に入っても RANGE を維持 (粘り)
-      return REGIME_RANGE;
-
-    case REGIME_TREND:
-      // TREND → RANGE: α が ThresholdLow を下回って初めて遷移
-      if (alpha < thresholdLow)
-        return REGIME_RANGE;
-      // TREND → TRANSITION: α が不感帯に入っても TREND を維持 (粘り)
-      return REGIME_TREND;
-
-    case REGIME_TRANSITION:
-    case REGIME_NONE:
-    case REGIME_ALL:
-    default:
-      // 初回または未判定状態: 従来通りの閾値判定
-      if (alpha < thresholdLow)
-        return REGIME_RANGE;
-      if (alpha > thresholdHigh)
-        return REGIME_TREND;
-      return REGIME_TRANSITION;
-  }
+  return DetermineRegime(alpha, thresholdLow, thresholdHigh);
 }
+
