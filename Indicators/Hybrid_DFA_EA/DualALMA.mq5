@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Hybrid DFA Quant"
 #property link "https://www.mql5.com"
-#property version "2.10"
+#property version "2.20"
 #property indicator_chart_window
 #property indicator_buffers 5
 #property indicator_plots 2
@@ -24,21 +24,27 @@
 #property indicator_width2 2
 
 //--- 入力パラメータ
-//--- ALMA Core Settings
+//--- ALMA Core Settings (低遅延・高平滑設計)
 input int InpAlmaFastWindow = 9;                        // 短期窓幅 (Fast Window)
 input int InpAlmaSlowWindow = 21;                       // 長期窓幅 (Slow Window)
-input double InpAlmaOffset = 0.85;                      // 基準 Offset (0.0〜1.0)
-input double InpAlmaSigma = 6.0;                        // 基準 Sigma (1.0〜10.0)
+input double InpAlmaFastOffset = 0.92;                  // 短期 Offset (0.0〜1.0: 高値ほど低遅延)
+input double InpAlmaSlowOffset = 0.90;                  // 長期 Offset (0.0〜1.0: 高値ほど低遅延)
+input double InpAlmaFastSigma = 5.5;                    // 短期 Sigma (1.0〜10.0)
+input double InpAlmaSlowSigma = 5.5;                    // 長期 Sigma (1.0〜10.0)
 input ENUM_APPLIED_PRICE InpAppliedPrice = PRICE_CLOSE; // 適用価格
 
-//--- DSP Pre-Filter (Noise Cut)
-input bool InpUseSuperSmoother = true; // 2-Pole SuperSmoother有効化
-input int InpSSCutoff = 8;             // 高周波カットオフ周期 (bars)
+//--- DSP Optional Pre-Filter (Noise Cut: 低遅延重視時はOFF推奨)
+input bool InpUseSuperSmoother = false;                 // 2-Pole SuperSmoother有効化 (OFF推奨)
+input int InpSSCutoff = 4;                              // 高周波カットオフ周期 (bars: 4推奨)
+
+//--- Zero-Lag Momentum Feedforward (先行価格補正: スパイクゼロの低遅延化)
+input bool InpUseZeroLagLead = false;                   // 先行モメンタム補正有効化
+input double InpLeadFactor = 0.40;                      // 先行モメンタム係数 (0.1〜1.0)
 
 //--- Schmitt Trigger (Hysteresis)
-input bool InpUseSchmittTrigger = true;  // ATR連動シュミットトリガー有効化
-input int InpHysteresisAtrPeriod = 14;   // ヒステリシス用ATR期間
-input double InpHysteresisFactor = 0.20; // 不感帯幅係数 (ATR比率: 0.20 = 20% of ATR)
+input bool InpUseSchmittTrigger = true;                 // ATR連動シュミットトリガー有効化
+input int InpHysteresisAtrPeriod = 14;                  // ヒステリシス用ATR期間
+input double InpHysteresisFactor = 0.08;                // 不感帯幅係数 (ATR比率: 0.08 = 8% of ATR)
 
 //--- インジケータバッファ
 double BufferFast[];
@@ -99,15 +105,20 @@ int OnInit() {
     PlotIndexSetDouble(1, PLOT_EMPTY_VALUE, EMPTY_VALUE);
 
     IndicatorSetString(INDICATOR_SHORTNAME,
-                       StringFormat("RobustDualALMA(Fast=%d, Slow=%d, SS=%s, ST=%s)",
+                       StringFormat("RobustDualALMA(Fast=%d, Slow=%d, FastOff=%.2f, SlowOff=%.2f, SS=%s, ZL=%s, ST=%s)",
                                     InpAlmaFastWindow, InpAlmaSlowWindow,
+                                    InpAlmaFastOffset, InpAlmaSlowOffset,
                                     InpUseSuperSmoother ? "ON" : "OFF",
+                                    InpUseZeroLagLead ? "ON" : "OFF",
                                     InpUseSchmittTrigger ? "ON" : "OFF"));
     IndicatorSetInteger(INDICATOR_DIGITS, _Digits);
 
-    PrintFormat("[RobustDualALMA] OnInit: Fast=%d, Slow=%d, Offset=%.4f, Sigma=%.4f, Price=%d, SS=%s(Cutoff=%d), ST=%s(ATRPeriod=%d, HFactor=%.4f)",
-                InpAlmaFastWindow, InpAlmaSlowWindow, InpAlmaOffset, InpAlmaSigma, (int)InpAppliedPrice,
+    PrintFormat("[RobustDualALMA] OnInit: Fast=%d(Off=%.2f,Sig=%.1f), Slow=%d(Off=%.2f,Sig=%.1f), Price=%d, SS=%s(Cutoff=%d), ZL=%s(Factor=%.2f), ST=%s(ATRPeriod=%d, HFactor=%.4f)",
+                InpAlmaFastWindow, InpAlmaFastOffset, InpAlmaFastSigma,
+                InpAlmaSlowWindow, InpAlmaSlowOffset, InpAlmaSlowSigma,
+                (int)InpAppliedPrice,
                 InpUseSuperSmoother ? "ON" : "OFF", InpSSCutoff,
+                InpUseZeroLagLead ? "ON" : "OFF", InpLeadFactor,
                 InpUseSchmittTrigger ? "ON" : "OFF", InpHysteresisAtrPeriod, InpHysteresisFactor);
 
     if (InpAlmaFastWindow < 2 || InpAlmaSlowWindow <= InpAlmaFastWindow) {
@@ -116,9 +127,9 @@ int OnInit() {
         return INIT_PARAMETERS_INCORRECT;
     }
 
-    if (InpSSCutoff < 2 || InpHysteresisAtrPeriod < 1) {
-        PrintFormat("[RobustDualALMA] 初期化エラー: 周期パラメータが不正です (SSCutoff=%d, HysteresisAtrPeriod=%d)。",
-                    InpSSCutoff, InpHysteresisAtrPeriod);
+    if (InpSSCutoff < 2 || InpHysteresisAtrPeriod < 1 || InpLeadFactor < 0.0) {
+        PrintFormat("[RobustDualALMA] 初期化エラー: パラメータ設定が不正です (SSCutoff=%d, HysteresisAtrPeriod=%d, LeadFactor=%.2f)。",
+                    InpSSCutoff, InpHysteresisAtrPeriod, InpLeadFactor);
         return INIT_PARAMETERS_INCORRECT;
     }
 
@@ -129,9 +140,9 @@ int OnInit() {
     ss_c3 = -ss_a1 * ss_a1;
     ss_c1 = 1.0 - ss_c2 - ss_c3;
 
-    // 2. 固定 ALMA 重み係数事前計算
-    if (!CalculateWeights(InpAlmaFastWindow, InpAlmaOffset, InpAlmaSigma, wFast, sumWFast) ||
-        !CalculateWeights(InpAlmaSlowWindow, InpAlmaOffset, InpAlmaSigma, wSlow, sumWSlow)) {
+    // 2. 固定 ALMA 重み係数事前計算 (Fast/Slow それぞれ個別に最適オフセット・シグマで計算)
+    if (!CalculateWeights(InpAlmaFastWindow, InpAlmaFastOffset, InpAlmaFastSigma, wFast, sumWFast) ||
+        !CalculateWeights(InpAlmaSlowWindow, InpAlmaSlowOffset, InpAlmaSlowSigma, wSlow, sumWSlow)) {
         Print("[RobustDualALMA] 初期化エラー: 重み係数計算に失敗しました。");
         return INIT_PARAMETERS_INCORRECT;
     }
@@ -199,7 +210,7 @@ int OnCalculate(const int rates_total, const int prev_calculated,
     for (int i = start; i < rates_total; i++) {
         double rawPrice = GetAppliedPrice(i, open, high, low, close);
 
-        // 1. SuperSmoother による高周波ジッター・ヒゲの低遅延遮断
+        // 1. SuperSmoother による高周波ジッター遮断 (オプション)
         double clean = rawPrice;
         if (InpUseSuperSmoother) {
             if (i >= 2) {
@@ -211,23 +222,31 @@ int OnCalculate(const int rates_total, const int prev_calculated,
                 clean = (rawPrice + GetAppliedPrice(0, open, high, low, close)) * 0.5;
             }
         }
+
+        // 2. 先行モメンタム補正 (Zero-Lag Feedforward: オプション)
+        // 入力価格側に微小なモメンタムを加算し、後段のガウス積分でノイズを平滑化するためスパイクゼロ
+        if (InpUseZeroLagLead && i >= 1) {
+            double prevP = GetAppliedPrice(i - 1, open, high, low, close);
+            clean = clean + InpLeadFactor * (clean - prevP);
+        }
+
         BufferPreFiltered[i] = clean;
 
-        // 2. 固定重みによる Fast ALMA 畳み込み演算 (極めて滑らか・低遅延)
+        // 3. 最適重みによる Fast ALMA 畳み込み演算 (Offset 0.92: 高速立ち上がり・スパイクゼロ)
         double fastSum = 0.0;
         for (int k = 0; k < InpAlmaFastWindow; k++) {
             fastSum += BufferPreFiltered[i - k] * wFast[k];
         }
         BufferFast[i] = fastSum / sumWFast;
 
-        // 3. 固定重みによる Slow ALMA 畳み込み演算 (極めて滑らか・低遅延)
+        // 4. 最適重みによる Slow ALMA 畳み込み演算 (Offset 0.90: 高速追従・スパイクゼロ)
         double slowSum = 0.0;
         for (int k = 0; k < InpAlmaSlowWindow; k++) {
             slowSum += BufferPreFiltered[i - k] * wSlow[k];
         }
         BufferSlow[i] = slowSum / sumWSlow;
 
-        // 4. True Range & ATR 計算 (ヒステリシス不感帯用)
+        // 5. True Range & ATR 計算 (ヒステリシス不感帯用)
         double tr = high[i] - low[i];
         if (i > 0) {
             double tr1 = MathAbs(high[i] - close[i - 1]);
@@ -244,7 +263,7 @@ int OnCalculate(const int rates_total, const int prev_calculated,
         }
         BufferATR[i] = curAtr;
 
-        // 5. シュミットトリガーによるヒステリシス状態ラッチ (ダマシ・チャタリング完全防止)
+        // 6. シュミットトリガーによるヒステリシス状態ラッチ (ダマシ・チャタリング完全防止)
         double diff = BufferFast[i] - BufferSlow[i];
         double h_band = 0.0;
         if (InpUseSchmittTrigger) {

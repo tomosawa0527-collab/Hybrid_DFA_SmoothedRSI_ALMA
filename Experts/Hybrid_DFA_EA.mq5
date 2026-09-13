@@ -42,13 +42,17 @@ input group "=== トレンド戦略 (Dual ALMA) ==="
 input bool InpUseTrendStrategy = true;                                      // トレンド戦略 (Dual ALMA Cross) を有効化
 input int InpAlmaFastWindow = 9;                                            // 短期 ALMA 窓幅
 input int InpAlmaSlowWindow = 21;                                           // 長期 ALMA 窓幅
-input double InpAlmaOffset = 0.85;                                          // ALMA Offset (共通)
-input double InpAlmaSigma = 6.0;                                            // ALMA Sigma (共通)
-input bool InpAlmaUseSuperSmoother = true;                                  // SuperSmoother 前処理有効化
-input int InpAlmaSSCutoff = 8;                                              // SS カットオフ周期 (bars)
+input double InpAlmaFastOffset = 0.92;                                      // 短期 ALMA Offset (高値ほど低遅延)
+input double InpAlmaSlowOffset = 0.90;                                      // 長期 ALMA Offset (高値ほど低遅延)
+input double InpAlmaFastSigma = 5.5;                                        // 短期 ALMA Sigma
+input double InpAlmaSlowSigma = 5.5;                                        // 長期 ALMA Sigma
+input bool InpAlmaUseSuperSmoother = false;                                 // SuperSmoother 前処理有効化 (OFF推奨)
+input int InpAlmaSSCutoff = 4;                                              // SS カットオフ周期 (bars)
+input bool InpAlmaUseZeroLagLead = false;                                   // 先行モメンタム補正有効化
+input double InpAlmaLeadFactor = 0.40;                                      // 先行モメンタム係数
 input bool InpAlmaUseSchmittTrigger = true;                                 // シュミットトリガー (ヒステリシス) 有効化
 input int InpAlmaHysteresisAtrPeriod = 14;                                  // ヒステリシス用 ATR 期間
-input double InpAlmaHysteresisFactor = 0.20;                                // ヒステリシス幅係数 (ATR比率)
+input double InpAlmaHysteresisFactor = 0.08;                                // ヒステリシス幅係数 (ATR比率)
 
 //--- 出口戦略 (ATR Risk Management)
 input group "=== 出口戦略 (ATR) ==="
@@ -133,21 +137,32 @@ int OnInit() {
 
     // 3. Dual ALMA インディケータハンドル取得 (チャート足: メインウィンドウ)
     if (InpUseTrendStrategy) {
-        PrintFormat("[Hybrid_DFA_EA] DualALMA ハンドル生成開始: FastWindow=%d, SlowWindow=%d, Offset=%.4f, Sigma=%.4f, Price=%d, SS=%s(Cutoff=%d), ST=%s(ATRPeriod=%d, HFactor=%.4f)",
-                    InpAlmaFastWindow, InpAlmaSlowWindow, InpAlmaOffset, InpAlmaSigma, (int)PRICE_CLOSE,
+        PrintFormat("[Hybrid_DFA_EA] DualALMA ハンドル生成開始: Fast=%d(Off=%.2f,Sig=%.1f), Slow=%d(Off=%.2f,Sig=%.1f), Price=%d, SS=%s(Cutoff=%d), ZL=%s(Factor=%.2f), ST=%s(ATRPeriod=%d, HFactor=%.4f)",
+                    InpAlmaFastWindow, InpAlmaFastOffset, InpAlmaFastSigma,
+                    InpAlmaSlowWindow, InpAlmaSlowOffset, InpAlmaSlowSigma,
+                    (int)PRICE_CLOSE,
                     InpAlmaUseSuperSmoother ? "ON" : "OFF", InpAlmaSSCutoff,
+                    InpAlmaUseZeroLagLead ? "ON" : "OFF", InpAlmaLeadFactor,
                     InpAlmaUseSchmittTrigger ? "ON" : "OFF", InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
 
         h_dualAlma =
             iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DualALMA",
-                    InpAlmaFastWindow, InpAlmaSlowWindow, InpAlmaOffset, InpAlmaSigma, PRICE_CLOSE,
+                    InpAlmaFastWindow, InpAlmaSlowWindow,
+                    InpAlmaFastOffset, InpAlmaSlowOffset,
+                    InpAlmaFastSigma, InpAlmaSlowSigma,
+                    PRICE_CLOSE,
                     InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
+                    InpAlmaUseZeroLagLead, InpAlmaLeadFactor,
                     InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
         if (h_dualAlma == INVALID_HANDLE) {
             h_dualAlma =
                 iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DualALMA",
-                        InpAlmaFastWindow, InpAlmaSlowWindow, InpAlmaOffset, InpAlmaSigma, PRICE_CLOSE,
+                        InpAlmaFastWindow, InpAlmaSlowWindow,
+                        InpAlmaFastOffset, InpAlmaSlowOffset,
+                        InpAlmaFastSigma, InpAlmaSlowSigma,
+                        PRICE_CLOSE,
                         InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
+                        InpAlmaUseZeroLagLead, InpAlmaLeadFactor,
                         InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
         }
         if (h_dualAlma == INVALID_HANDLE) {
