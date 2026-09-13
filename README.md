@@ -93,28 +93,23 @@ graph TD
 
 ---
 
-### 3.3 Robust Adaptive Dual ALMA インディケータ (`DualALMA.mq5`)
+### 3.3 Robust Dual ALMA インディケータ (`DualALMA.mq5`)
 
-信号処理工学（DSP）と動的適応制御、そしてATR連動シュミットトリガーを統合した超低遅延・高S/N比トレンドフォローフィルターです。従来の単純なガウス移動平均が抱えていた「中間周波サイクル（うねり）の通過によるウィップソー」と「因果的FIRフィルタの不可避な群遅延」を多段パイプラインにより根本解決しています。
+信号処理工学（DSP）とATR連動シュミットトリガーを統合した低遅延・高S/N比トレンドフォローフィルターです。2-Pole SuperSmoother による高周波ノイズ遮断と、事前計算された固定ガウス重みによる ALMA 畳み込み演算を組み合わせることで、**スパイクやオーバーシュートの発生しない極めて滑らかで美しい曲線**を実現しています。
 
 ```mermaid
 flowchart LR
-    A["原価格 P_t"] --> B["Layer 1a<br/>2-Pole SuperSmoother<br/>(高周波ジッター遮断)"]
-    B --> C["Layer 1b<br/>2-Pole Decycler<br/>(中間周波うねり除去)"]
-    C --> D["Layer 2<br/>Kaufman ER<br/>(動的パラメータ適応)"]
-    D --> E["Layer 3<br/>Adaptive ALMA<br/>(動的Offset/Sigma)"]
-    E --> F["Layer 4<br/>Zero-Lag補正<br/>(前方外挿)"]
-    F --> G["Schmitt Trigger<br/>(ATR動的ヒステリシス)"]
+    A["原価格 P_t"] --> B["2-Pole SuperSmoother<br/>(高周波ジッター・ヒゲ遮断)"]
+    B --> C["Dual ALMA<br/>(固定ガウス重み高速演算)"]
+    C --> D["Schmitt Trigger<br/>(ATR動的ヒステリシス)"]
 ```
 
-- **Layer 1: 多段DSP前処理フィルタ**:
-  - **2-Pole SuperSmoother (周期8)**: サンプリング歪みと微小なティックノイズを無遅延で急峻遮断（-40 dB/decade）。
-  - **2-Pole Decycler (周期60)**: 原系列からハイパスフィルタ成分を減算相殺し、20〜60バー程度で循環する偽トレンド（中間周波のうねり）を完全除去して純粋な大局トレンド成分を抽出。
-- **Layer 2: カウフマン効率比（KER）による動的ガウス窓適応**:
-  - 相場のトレンド度合い（$ER$）を毎バー計測し、トレンド相場（$ER \to 1.0$）では重心シフト $\text{Offset}$ を最大 $0.96$ まで自動引き上げ、$\text{Sigma}$ を $9.5$ まで引き締めて追従性を極限化。レンジ相場（$ER \to 0.0$）では $\text{Offset}$ を $0.60$ まで後退させ、平滑度を最大化。
-- **Layer 3 & 4: Zero-Lag 前方予測外挿補正**:
-  - 窓幅 $N$ に比例した代表遅延定数 $\tau = N / 4$ とALMA系列の速度ベクトル（1次微分）を用いた前方外挿項を加算し、トレンド転換時の位相遅延を実質ゼロに圧縮。
-- **Layer 5: ATR連動シュミットトリガー（動的ヒステリシス不感帯）**:
+- **Layer 1: 2-Pole SuperSmoother 前処理フィルタ**:
+  - 遮断周期8バーの2次バターワースIIRフィルタにより、ナイキスト周波数近傍の高周波ジッター・ヒゲ・サンプリング歪みを急峻に遮断（-40 dB/decade）。
+- **Layer 2: 高精度固定ガウス重み ALMA 畳み込み演算**:
+  - `OnInit` で重み配列（`wFast`, `wSlow`）を事前計算。動的適応による重心の急変や、微分外挿（Zero-Lag）による増幅・オーバーシュートを完全排除。
+  - Arnaud Legoux Moving Average 本来の「Offset=0.85 による最新バー寄り重心」と「Sigma=6.0 による最適な釣鐘型減衰」を100%発揮し、低遅延と極上の滑らかさを両立。
+- **Layer 3: ATR連動シュミットトリガー（動的ヒステリシス不感帯）**:
   - 直近14期間のATRに連動した不感帯幅 $H_t = 0.20 \times \text{ATR}_{14}$ を設定。
   - **BUYブレイクアウト**: $\text{ALMA}_{\text{Fast}} - \text{ALMA}_{\text{Slow}} > +H_t$ で強気（+1.0）確定。
   - **SELLブレイクダウン**: $\text{ALMA}_{\text{Fast}} - \text{ALMA}_{\text{Slow}} < -H_t$ で弱気（-1.0）確定。
@@ -174,15 +169,10 @@ flowchart LR
 | **`InpUseTrendStrategy`** | `true` | トレンド戦略 (Dual ALMA) の有効化 |
 | **`InpAlmaFastWindow`** | `9` | 短期 ALMA 窓幅 |
 | **`InpAlmaSlowWindow`** | `21` | 長期 ALMA 窓幅 |
-| **`InpAlmaOffset`** | `0.85` | ALMA 基準 Offset (重心シフト 0.05〜0.99) |
+| **`InpAlmaOffset`** | `0.85` | ALMA 基準 Offset (重心シフト 0.0〜1.0) |
 | **`InpAlmaSigma`** | `6.0` | ALMA 基準 Sigma (ガウス幅) |
 | **`InpAlmaUseSuperSmoother`** | `true` | SuperSmoother 前処理有効化 (高周波ジッター遮断) |
 | **`InpAlmaSSCutoff`** | `8` | SuperSmoother カットオフ周期 (bars) |
-| **`InpAlmaUseDecycler`** | `true` | Decycler 有効化 (中間周波サイクルのうねり除去) |
-| **`InpAlmaDecyclerPeriod`** | `60` | Decycler 遮断周期 (bars) |
-| **`InpAlmaUseAdaptive`** | `true` | Kaufman ER による動的パラメータ適応有効化 |
-| **`InpAlmaERPeriod`** | `10` | 効率比 (ER) 計算周期 (bars) |
-| **`InpAlmaUseZeroLag`** | `true` | 前方予測 Zero-Lag 補正有効化 (位相遅延極小化) |
 | **`InpAlmaUseSchmittTrigger`**| `true` | シュミットトリガー (ATRヒステリシス) 有効化 |
 | **`InpAlmaHysteresisAtrPeriod`** | `14` | ヒステリシス用 ATR 計算期間 |
 | **`InpAlmaHysteresisFactor`** | `0.20` | ヒステリシス不感帯幅係数 ($\text{ATR} \times 0.20$) |
@@ -215,8 +205,20 @@ flowchart LR
 
 ## 6. 改訂履歴 (Changelog)
 
+### [v1.6.1] - 2026-09-13
+- **Dual ALMA 異常スパイク解消と高平滑・低遅延アーキテクチャの確立 (`DualALMA.mq5`, `Hybrid_DFA_EA.mq5`)**:
+  - **スパイク（異常乱高下）の根本根絶**:
+    - 急変後の反発相場等で Zero-Lag 前方外挿補正（速度の数倍〜10倍増幅）と Kaufman ER 動的適応（重心シフトのステップ変化）が相互干渉し、わずか1バーで数百pipsの巨大なトゲ（スパイク）を発生させていた不具合を解消。
+    - Zero-Lag 外挿補正および動的適応を廃止し、ALMA 本来の固定ガウス重み事前計算方式（`OnInit` で `wFast`, `wSlow` を一括キャッシュ）へ回帰。
+  - **堅牢・高平滑な3段パイプライン構成**:
+    - **Layer 1 (2-Pole SuperSmoother)**: 周期8バーの2次バターワースIIRフィルタで高周波ノイズ・ヒゲを無遅延遮断。
+    - **Layer 2 (Robust Dual ALMA)**: ノイズ除去された価格系列に対し、Offset=0.85, Sigma=6.0 の固定重み畳み込み演算を適用。オーバーシュートや歪みのない極上の滑らかさを実現。
+    - **Layer 3 (ATR連動シュミットトリガー)**: $H_t = 0.20 \times \text{ATR}_{14}$ の不感帯による状態ラッチ（保持）により、レンジ相場でのチャタリング（往復ビンタ）を完全抑止。
+  - **MQL5 `iCustom` 互換性の完全確保**:
+    - `DualALMA.mq5` からパラメータオフセットの原因となる `input group` を完全除去し、`iCustom` 経由の引数受け渡しにおける位置ズレ（Fast=21, Slow=0 となる初期化エラー）を完全に防止。
+
 ### [v1.6.0] - 2026-09-13
-- **Robust Adaptive Dual ALMA への全面刷新 (`DualALMA.mq5`, `Hybrid_DFA_EA.mq5`, `DFA_Common.mqh`)**:
+- **Robust Adaptive Dual ALMA の導入 (`DualALMA.mq5`, `Hybrid_DFA_EA.mq5`, `DFA_Common.mqh`)**:
   - **4段多段デジタル信号処理（DSP）パイプライン**:
     - **Layer 1a (2-Pole SuperSmoother)**: 遮断周期8バーの2次バターワースIIRフィルタにより、ナイキスト周波数近傍の高周波ジッター・エイリアシング雑音を急峻に遮断。
     - **Layer 1b (2-Pole Decycler)**: 遮断周期60バーのハイパス成分を原系列から減算相殺し、20〜60バーの中間周期うねりノイズを完全消去して純粋な大局トレンド成分を抽出。

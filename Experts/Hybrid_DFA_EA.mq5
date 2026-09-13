@@ -46,11 +46,6 @@ input double InpAlmaOffset = 0.85;                                          // A
 input double InpAlmaSigma = 6.0;                                            // ALMA Sigma (共通)
 input bool InpAlmaUseSuperSmoother = true;                                  // SuperSmoother 前処理有効化
 input int InpAlmaSSCutoff = 8;                                              // SS カットオフ周期 (bars)
-input bool InpAlmaUseDecycler = true;                                       // Decycler (うねり除去) 有効化
-input int InpAlmaDecyclerPeriod = 60;                                       // Decycler 遮断周期 (bars)
-input bool InpAlmaUseAdaptive = true;                                       // Kaufman ER 動的適応有効化
-input int InpAlmaERPeriod = 10;                                             // ER 計算周期 (bars)
-input bool InpAlmaUseZeroLag = true;                                        // 前方予測 Zero-Lag 補正有効化
 input bool InpAlmaUseSchmittTrigger = true;                                 // シュミットトリガー (ヒステリシス) 有効化
 input int InpAlmaHysteresisAtrPeriod = 14;                                  // ヒステリシス用 ATR 期間
 input double InpAlmaHysteresisFactor = 0.20;                                // ヒステリシス幅係数 (ATR比率)
@@ -138,26 +133,21 @@ int OnInit() {
 
     // 3. Dual ALMA インディケータハンドル取得 (チャート足: メインウィンドウ)
     if (InpUseTrendStrategy) {
-        PrintFormat("[Hybrid_DFA_EA] DualALMA ハンドル生成開始: FastWindow=%d, SlowWindow=%d, Offset=%.4f, Sigma=%.4f, Price=%d, SS=%s(Cutoff=%d), Decycle=%s(Period=%d), Adapt=%s(ERPeriod=%d), ZL=%s, ST=%s(ATRPeriod=%d, HFactor=%.4f)",
+        PrintFormat("[Hybrid_DFA_EA] DualALMA ハンドル生成開始: FastWindow=%d, SlowWindow=%d, Offset=%.4f, Sigma=%.4f, Price=%d, SS=%s(Cutoff=%d), ST=%s(ATRPeriod=%d, HFactor=%.4f)",
                     InpAlmaFastWindow, InpAlmaSlowWindow, InpAlmaOffset, InpAlmaSigma, (int)PRICE_CLOSE,
                     InpAlmaUseSuperSmoother ? "ON" : "OFF", InpAlmaSSCutoff,
-                    InpAlmaUseDecycler ? "ON" : "OFF", InpAlmaDecyclerPeriod,
-                    InpAlmaUseAdaptive ? "ON" : "OFF", InpAlmaERPeriod,
-                    InpAlmaUseZeroLag ? "ON" : "OFF",
                     InpAlmaUseSchmittTrigger ? "ON" : "OFF", InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
 
         h_dualAlma =
             iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DualALMA",
                     InpAlmaFastWindow, InpAlmaSlowWindow, InpAlmaOffset, InpAlmaSigma, PRICE_CLOSE,
-                    InpAlmaUseSuperSmoother, InpAlmaSSCutoff, InpAlmaUseDecycler, InpAlmaDecyclerPeriod,
-                    InpAlmaUseAdaptive, InpAlmaERPeriod, InpAlmaUseZeroLag,
+                    InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
                     InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
         if (h_dualAlma == INVALID_HANDLE) {
             h_dualAlma =
                 iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DualALMA",
                         InpAlmaFastWindow, InpAlmaSlowWindow, InpAlmaOffset, InpAlmaSigma, PRICE_CLOSE,
-                        InpAlmaUseSuperSmoother, InpAlmaSSCutoff, InpAlmaUseDecycler, InpAlmaDecyclerPeriod,
-                        InpAlmaUseAdaptive, InpAlmaERPeriod, InpAlmaUseZeroLag,
+                        InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
                         InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
         }
         if (h_dualAlma == INVALID_HANDLE) {
