@@ -128,9 +128,10 @@ graph TD
   - エントリーは確実なレジーム（$\alpha < 0.45$ または $\alpha > 0.55$）でのみ行い、ポジション保有中はノイズによる早期クローズを防ぐため $0.50$ を跨ぐまで粘り強くホールド。
   - レンジ保有中に $\alpha > 0.50$（トレンド側へ傾斜）、またはトレンド保有中に $\alpha < 0.50$（レンジ側へ傾斜）となった時点で即時強制決済。
   - チャート足確定バー（Bar 1）基準でDFAバッファを同期取得し、タイムラグなく安全に手仕舞い。
-- **動的 ATR エグジット**:
-  - 利確（Take Profit）: $\text{ATR}(14) \times 3.0$
+- **動的 ATR エグジット & トレーリングストップ**:
+  - 利確（Take Profit）: $\text{ATR}(14) \times 3.0$ （※`InpAtrTpFactor = 0` 指定時はTPを無効化し、SL側ATR倍率を用いたトレーリングストップへ自動切替）
   - 損切（Stop Loss）: $\text{ATR}(14) \times 1.5$
+  - **M1 ATRトレーリングストップ**: `InpAtrTpFactor = 0` の場合、PC負荷抑制とバックテスト再現性確保のため1分足（M1）確定毎に判定し、価格の有利な進行に合わせて $\text{ATR} \times \text{SlFactor}$ 幅でSLをリアルタイム追従（切り上げ/切り下げ）。
 
 ---
 
@@ -159,7 +160,7 @@ graph TD
 | **`InpUseAtrExit`** | `true` | ATR ベース動的 TP/SL の有効化 |
 | **`InpAtrTimeframeMode`** | `HTF_MODE_AUTO_NEXT` | ATR 計算時間軸 (デフォルト: 自動1段階上位足) |
 | **`InpAtrPeriod`** | `14` | ATR 計算期間 |
-| **`InpAtrTpFactor`** | `3.0` | ATR 利確乗数 ($\text{ATR} \times 3.0$) |
+| **`InpAtrTpFactor`** | `3.0` | ATR 利確乗数 ($\text{ATR} \times 3.0$。0指定時はTPなし＆SLトレーリングストップ) |
 | **`InpAtrSlFactor`** | `1.5` | ATR 損切乗数 ($\text{ATR} \times 1.5$) |
 
 ---

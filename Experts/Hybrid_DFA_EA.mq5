@@ -51,7 +51,7 @@ input bool InpUseAtrExit = true;                                            // A
 input ENUM_HTF_MODE InpAtrTimeframeMode = HTF_MODE_AUTO_NEXT;               // ATR 計算時間軸 (デフォルト: 1段階上位足)
 input int InpAtrPeriod = 14;                                                // ATR 期間
 input double InpAtrSlFactor = 1.5;                                          // ストップロス (ATR倍率)
-input double InpAtrTpFactor = 3.0;                                          // テイクプロフィット (ATR倍率)
+input double InpAtrTpFactor = 3.0;                                          // テイクプロフィット (ATR倍率, 0でTPなし&SLトレーリングストップ)
 
 //+------------------------------------------------------------------+
 //| グローバル変数・オブジェクト                                     |
@@ -68,6 +68,8 @@ ENUM_TIMEFRAMES m_dfaTf = PERIOD_CURRENT;
 ENUM_TIMEFRAMES m_atrTf = PERIOD_CURRENT;
 
 datetime m_lastBarTime = 0;
+datetime m_lastM1BarTime = 0;
+double g_lastAtr = 0.0;
 
 // Phase 3: レジーム状態遷移機械の状態保持
 ENUM_REGIME_TYPE g_currentRegime = REGIME_NONE;
@@ -148,6 +150,13 @@ int OnInit() {
             Print("[Hybrid_DFA_EA] ATR インディケータのハンドル取得に失敗しました。");
             return INIT_FAILED;
         }
+
+        // 初期ATR値の取得
+        double atrBuf[];
+        ArraySetAsSeries(atrBuf, true);
+        if (CopyBuffer(h_atr, 0, 1, 1, atrBuf) > 0) {
+            g_lastAtr = atrBuf[0];
+        }
     }
 
     Print("[Hybrid_DFA_EA] 初期化が正常に完了しました。");
@@ -180,6 +189,18 @@ bool IsNewBar() {
     datetime currentBarTime = iTime(_Symbol, _Period, 0);
     if (currentBarTime != m_lastBarTime) {
         m_lastBarTime = currentBarTime;
+        return true;
+    }
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| 1分足新バー確定判定ヘルパー (トレーリングストップ用)              |
+//+------------------------------------------------------------------+
+bool IsNewM1Bar() {
+    datetime currentM1Time = iTime(_Symbol, PERIOD_M1, 0);
+    if (currentM1Time != m_lastM1BarTime) {
+        m_lastM1BarTime = currentM1Time;
         return true;
     }
     return false;
@@ -271,6 +292,7 @@ bool UpdateSystemState(SSystemState& state) {
         }
         if (copied > 0) {
             state.atr = atrBuf[0];
+            g_lastAtr = state.atr;
         } else {
             Print("[Hybrid_DFA_EA] ATR バッファ取得エラー");
             return false;
@@ -349,10 +371,91 @@ void CountOpenPositions(int& rangeBuys, int& rangeSells, int& trendBuys,
 }
 
 //+------------------------------------------------------------------+
+//| ATRトレーリングストップ更新 (1分足確定毎に判定)                  |
+//+------------------------------------------------------------------+
+void UpdateTrailingStop() {
+    // ATRが未初期化または無効な場合は最新バッファからの取得を試みる
+    if (g_lastAtr <= 0.0 && h_atr != INVALID_HANDLE) {
+        double atrBuf[];
+        ArraySetAsSeries(atrBuf, true);
+        if (CopyBuffer(h_atr, 0, 1, 1, atrBuf) > 0) {
+            g_lastAtr = atrBuf[0];
+        }
+    }
+
+    if (g_lastAtr <= 0.0) {
+        return;
+    }
+
+    double trailDistance = g_lastAtr * InpAtrSlFactor;
+    trailDistance = AdjustStopDistance(_Symbol, trailDistance);
+
+    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    if (point <= 0.0) point = _Point;
+
+    long stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+    long spreadPoints = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+    double minStopDistance = MathMax((double)stopsLevel, (double)spreadPoints) * point + (point * 2.0);
+
+    for (int i = PositionsTotal() - 1; i >= 0; i--) {
+        if (m_position.SelectByIndex(i)) {
+            if (m_position.Symbol() == _Symbol) {
+                ulong posMagic = m_position.Magic();
+                if (posMagic == InpMagicNumber + MAGIC_RANGE_OFFSET ||
+                    posMagic == InpMagicNumber + MAGIC_TREND_OFFSET) {
+
+                    ENUM_POSITION_TYPE posType = m_position.PositionType();
+                    double currentSL = m_position.StopLoss();
+                    double currentTP = m_position.TakeProfit();
+                    ulong ticket = m_position.Ticket();
+
+                    if (posType == POSITION_TYPE_BUY) {
+                        double newSL = NormalizeDouble(bid - trailDistance, _Digits);
+                        // 現在SLより切り上がり、かつ現在価格からのストップレベル制限を満たしている場合
+                        if (newSL > currentSL + (point * 0.5) && (bid - newSL) >= minStopDistance) {
+                            m_trade.SetExpertMagicNumber(posMagic);
+                            if (m_trade.PositionModify(ticket, newSL, currentTP)) {
+                                PrintFormat("[Hybrid_DFA_EA] ATRトレーリングストップ更新 (BUY): Ticket=%I64u, OldSL=%.5f -> NewSL=%.5f (Bid=%.5f, TrailDist=%.5f)",
+                                            ticket, currentSL, newSL, bid, trailDistance);
+                            } else {
+                                PrintFormat("[Hybrid_DFA_EA] ATRトレーリングストップ更新失敗 (BUY): Ticket=%I64u, エラーコード=%d",
+                                            ticket, GetLastError());
+                            }
+                        }
+                    } else if (posType == POSITION_TYPE_SELL) {
+                        double newSL = NormalizeDouble(ask + trailDistance, _Digits);
+                        // 現在SLが未設定、または現在SLより切り下がり、かつ現在価格からのストップレベル制限を満たしている場合
+                        if ((currentSL == 0.0 || newSL < currentSL - (point * 0.5)) && (newSL - ask) >= minStopDistance) {
+                            m_trade.SetExpertMagicNumber(posMagic);
+                            if (m_trade.PositionModify(ticket, newSL, currentTP)) {
+                                PrintFormat("[Hybrid_DFA_EA] ATRトレーリングストップ更新 (SELL): Ticket=%I64u, OldSL=%.5f -> NewSL=%.5f (Ask=%.5f, TrailDist=%.5f)",
+                                            ticket, currentSL, newSL, ask, trailDistance);
+                            } else {
+                                PrintFormat("[Hybrid_DFA_EA] ATRトレーリングストップ更新失敗 (SELL): Ticket=%I64u, エラーコード=%d",
+                                            ticket, GetLastError());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
 //| ティック処理メイン関数                                           |
 //+------------------------------------------------------------------+
 void OnTick() {
-    // バー確定時のみシグナル評価とレジーム監視を実行
+    // 1. トレーリングストップの更新 (1分足 M1 新バー確定時に判定・実行)
+    if (InpUseAtrExit && InpAtrTpFactor <= 0.0 && InpAtrSlFactor > 0.0) {
+        if (IsNewM1Bar()) {
+            UpdateTrailingStop();
+        }
+    }
+
+    // 2. チャート足の新バー確定時のみシグナル評価とレジーム監視を実行
     if (!IsNewBar()) {
         return;
     }
@@ -529,19 +632,26 @@ bool ExecuteOrder(const ENUM_ORDER_TYPE orderType,
     double tpPrice = 0.0;
 
     if (InpUseAtrExit && atr > 0.0) {
-        slDistance = atr * InpAtrSlFactor;
-        double tpDistance = atr * InpAtrTpFactor;
+        if (InpAtrSlFactor > 0.0) {
+            slDistance = atr * InpAtrSlFactor;
+            slDistance = AdjustStopDistance(_Symbol, slDistance);
 
-        // Phase 2: ストップレベル/スプレッドを考慮したSL/TP距離の補正
-        slDistance = AdjustStopDistance(_Symbol, slDistance);
-        tpDistance = AdjustStopDistance(_Symbol, tpDistance);
+            if (orderType == ORDER_TYPE_BUY) {
+                slPrice = NormalizeDouble(ask - slDistance, _Digits);
+            } else if (orderType == ORDER_TYPE_SELL) {
+                slPrice = NormalizeDouble(bid + slDistance, _Digits);
+            }
+        }
 
-        if (orderType == ORDER_TYPE_BUY) {
-            slPrice = NormalizeDouble(ask - slDistance, _Digits);
-            tpPrice = NormalizeDouble(ask + tpDistance, _Digits);
-        } else if (orderType == ORDER_TYPE_SELL) {
-            slPrice = NormalizeDouble(bid + slDistance, _Digits);
-            tpPrice = NormalizeDouble(bid - tpDistance, _Digits);
+        if (InpAtrTpFactor > 0.0) {
+            double tpDistance = atr * InpAtrTpFactor;
+            tpDistance = AdjustStopDistance(_Symbol, tpDistance);
+
+            if (orderType == ORDER_TYPE_BUY) {
+                tpPrice = NormalizeDouble(ask + tpDistance, _Digits);
+            } else if (orderType == ORDER_TYPE_SELL) {
+                tpPrice = NormalizeDouble(bid - tpDistance, _Digits);
+            }
         }
     }
 
