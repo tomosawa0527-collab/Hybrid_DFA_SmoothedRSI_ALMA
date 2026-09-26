@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Hybrid DFA System"
 #property link "https://www.mql5.com"
-#property version "1.50"
+#property version "1.60"
 
 #include "..\Include\Hybrid_DFA_EA\DFA_Common.mqh"
 #include <Trade\PositionInfo.mqh>
@@ -37,19 +37,33 @@ input int InpRsiPeriod = 7;                                                 // R
 input double InpRsiOverbought = 65.0;                                       // RSI 買われすぎ境界値
 input double InpRsiOversold = 35.0;                                         // RSI 売られすぎ境界値
 
-//--- トレンド戦略 (Dual ALMA Cross) 設定
-input group "=== トレンド戦略 (Dual ALMA) ==="
-input bool InpUseTrendStrategy = true;                                      // トレンド戦略 (Dual ALMA Cross) を有効化
-input int InpAlmaFastWindow = 9;                                            // 短期 ALMA 窓幅
-input int InpAlmaSlowWindow = 21;                                           // 長期 ALMA 窓幅
-input double InpAlmaOffset = 0.85;                                          // ALMA Offset (共通)
-input double InpAlmaSigma = 6.0;                                            // ALMA Sigma (共通)
+//--- トレンド戦略 (Dual MA Cross) 設定
+input group "=== トレンド戦略 (Dual MA Cross) ==="
+input bool InpUseTrendStrategy = true;                                      // トレンド戦略 (Dual MA Cross) を有効化
+input ENUM_TREND_MA_TYPE InpTrendMaType = TREND_MA_LWMA;                    // 移動平均タイプ (SMA/EMA/SMMA/LWMA/ALMA)
+input int InpMaFastWindow = 20;                                             // 短期 MA 期間 / 窓幅 (Fast Window)
+input int InpMaSlowWindow = 40;                                             // 長期 MA 期間 / 窓幅 (Slow Window)
+input ENUM_APPLIED_PRICE InpMaAppliedPrice = PRICE_CLOSE;                   // 適用価格
+
+//--- ALMA専用パラメータ (InpTrendMaType == TREND_MA_ALMA 時に有効)
+input group "--- ALMA 詳細設定 (InpTrendMaType=ALMA時) ---"
+input double InpAlmaFastOffset = 0.92;                                      // [ALMA] 短期 Offset (高値ほど低遅延)
+input double InpAlmaSlowOffset = 0.90;                                      // [ALMA] 長期 Offset (高値ほど低遅延)
+input double InpAlmaFastSigma = 5.5;                                        // [ALMA] 短期 Sigma
+input double InpAlmaSlowSigma = 5.5;                                        // [ALMA] 長期 Sigma
+input bool InpAlmaUseSuperSmoother = false;                                 // [ALMA] SuperSmoother 前処理 (OFF推奨)
+input int InpAlmaSSCutoff = 4;                                              // [ALMA] SS カットオフ周期 (bars)
+input bool InpAlmaUseZeroLagLead = false;                                   // [ALMA] 先行モメンタム補正有効化
+input double InpAlmaLeadFactor = 0.40;                                      // [ALMA] 先行モメンタム係数
+input bool InpAlmaUseSchmittTrigger = false;                                // [ALMA] シュミットトリガー (ヒステリシス) 有効化
+input int InpAlmaHysteresisAtrPeriod = 14;                                  // [ALMA] ヒステリシス用 ATR 期間
+input double InpAlmaHysteresisFactor = 0.08;                                // [ALMA] ヒステリシス幅係数 (ATR比率)
 
 //--- 出口戦略 (ATR Risk Management)
 input group "=== 出口戦略 (ATR) ==="
 input bool InpUseAtrExit = true;                                            // ATR 出口戦略 (SL/TP) を有効化
 input ENUM_HTF_MODE InpAtrTimeframeMode = HTF_MODE_AUTO_NEXT;               // ATR 計算時間軸 (デフォルト: 1段階上位足)
-input int InpAtrPeriod = 14;                                                // ATR 期間
+input int InpAtrPeriod = 20;                                                // ATR 期間
 input double InpAtrSlFactor = 1.5;                                          // ストップロス (ATR倍率)
 input double InpAtrTpFactor = 3.0;                                          // テイクプロフィット (ATR倍率, 0でTPなし&SLトレーリングストップ)
 
@@ -61,7 +75,7 @@ CPositionInfo m_position;
 
 int h_dfa = INVALID_HANDLE;
 int h_smoothedRsi = INVALID_HANDLE;
-int h_dualAlma = INVALID_HANDLE;
+int h_multiDualMa = INVALID_HANDLE;
 int h_atr = INVALID_HANDLE;
 
 ENUM_TIMEFRAMES m_dfaTf = PERIOD_CURRENT;
@@ -126,19 +140,47 @@ int OnInit() {
         }
     }
 
-    // 3. Dual ALMA インディケータハンドル取得 (チャート足: メインウィンドウ)
+    // 3. トレンド戦略 MA インディケータハンドル取得 (チャート足: メインウィンドウ)
+    // ※ MultiDualMA インディケータが SMA/EMA/SMMA/LWMA/ALMA の全計算を内包し、
+    //    Fast(clrOrangeRed: 赤/オレンジ) と Slow(clrDeepSkyBlue: 水色) の2色で全MAタイプ統一描画
     if (InpUseTrendStrategy) {
-        h_dualAlma =
-            iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DualALMA", InpAlmaFastWindow,
-                    InpAlmaSlowWindow, InpAlmaOffset, InpAlmaSigma, PRICE_CLOSE);
-        if (h_dualAlma == INVALID_HANDLE) {
-            h_dualAlma =
-                iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DualALMA", InpAlmaFastWindow,
-                        InpAlmaSlowWindow, InpAlmaOffset, InpAlmaSigma, PRICE_CLOSE);
+        string maTypeName = "LWMA";
+        switch (InpTrendMaType) {
+        case TREND_MA_SMA:  maTypeName = "SMA";  break;
+        case TREND_MA_EMA:  maTypeName = "EMA";  break;
+        case TREND_MA_SMMA: maTypeName = "SMMA"; break;
+        case TREND_MA_LWMA: maTypeName = "LWMA"; break;
+        case TREND_MA_ALMA: maTypeName = "ALMA"; break;
         }
-        if (h_dualAlma == INVALID_HANDLE) {
-            Print("[Hybrid_DFA_EA] DualALMA "
-                  "インディケータのハンドル取得に失敗しました。");
+
+        PrintFormat("[Hybrid_DFA_EA] トレンドMAハンドル生成開始: Type=%s, Fast=%d, Slow=%d, Price=%d, ST=%s(HFactor=%.4f)",
+                    maTypeName, InpMaFastWindow, InpMaSlowWindow, (int)InpMaAppliedPrice,
+                    InpAlmaUseSchmittTrigger ? "ON" : "OFF", InpAlmaHysteresisFactor);
+
+        h_multiDualMa =
+            iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\MultiDualMA",
+                    InpTrendMaType,
+                    InpMaFastWindow, InpMaSlowWindow,
+                    InpAlmaFastOffset, InpAlmaSlowOffset,
+                    InpAlmaFastSigma, InpAlmaSlowSigma,
+                    InpMaAppliedPrice,
+                    InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
+                    InpAlmaUseZeroLagLead, InpAlmaLeadFactor,
+                    InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
+        if (h_multiDualMa == INVALID_HANDLE) {
+            h_multiDualMa =
+                iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\MultiDualMA",
+                        InpTrendMaType,
+                        InpMaFastWindow, InpMaSlowWindow,
+                        InpAlmaFastOffset, InpAlmaSlowOffset,
+                        InpAlmaFastSigma, InpAlmaSlowSigma,
+                        InpMaAppliedPrice,
+                        InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
+                        InpAlmaUseZeroLagLead, InpAlmaLeadFactor,
+                        InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
+        }
+        if (h_multiDualMa == INVALID_HANDLE) {
+            Print("[Hybrid_DFA_EA] MultiDualMA インディケータのハンドル取得に失敗しました。");
             return INIT_FAILED;
         }
     }
@@ -173,8 +215,8 @@ void OnDeinit(const int reason) {
             IndicatorRelease(h_dfa);
         if (h_smoothedRsi != INVALID_HANDLE)
             IndicatorRelease(h_smoothedRsi);
-        if (h_dualAlma != INVALID_HANDLE)
-            IndicatorRelease(h_dualAlma);
+        if (h_multiDualMa != INVALID_HANDLE)
+            IndicatorRelease(h_multiDualMa);
         if (h_atr != INVALID_HANDLE)
             IndicatorRelease(h_atr);
     }
@@ -213,7 +255,7 @@ bool UpdateSystemState(SSystemState& state) {
     ZeroMemory(state);
     state.regime = REGIME_ALL;
 
-    // チャート足の Bar 1 時刻 (SmoothedRSI / DualALMA はチャート足基準で参照)
+    // チャート足の Bar 1 時刻 (SmoothedRSI / MultiDualMA はチャート足基準で参照)
     // ※ DFA / ATR は Phase 4 で各々上位足の iTime で個別取得に変更済み
     datetime bar1_time = iTime(_Symbol, _Period, 1);
 
@@ -262,20 +304,32 @@ bool UpdateSystemState(SSystemState& state) {
         }
     }
 
-    // 3. Dual ALMA の取得 (バー1, バー2)
-    if (InpUseTrendStrategy && h_dualAlma != INVALID_HANDLE) {
-        double fastBuf[], slowBuf[];
+    // 3. トレンド戦略 MA の取得 (バー1, バー2)
+    // ※ MultiDualMA インディケータが全MAタイプ（SMA/EMA/SMMA/LWMA/ALMA）の計算と2色描画を統一担当
+    if (InpUseTrendStrategy && h_multiDualMa != INVALID_HANDLE) {
+        double fastBuf[], slowBuf[], sigBuf[];
         ArraySetAsSeries(fastBuf, true);
         ArraySetAsSeries(slowBuf, true);
-        if (CopyBuffer(h_dualAlma, 0, 1, 2, fastBuf) == 2 &&
-            CopyBuffer(h_dualAlma, 1, 1, 2, slowBuf) == 2) {
+        ArraySetAsSeries(sigBuf, true);
+
+        if (CopyBuffer(h_multiDualMa, 0, 1, 2, fastBuf) == 2 &&
+            CopyBuffer(h_multiDualMa, 1, 1, 2, slowBuf) == 2) {
             state.alma_fast_1 = fastBuf[0];
             state.alma_fast_2 = fastBuf[1];
             state.alma_slow_1 = slowBuf[0];
             state.alma_slow_2 = slowBuf[1];
         } else {
-            Print("[Hybrid_DFA_EA] Dual ALMA バッファ取得エラー");
+            Print("[Hybrid_DFA_EA] トレンド MA バッファ取得エラー");
             return false;
+        }
+
+        if (CopyBuffer(h_multiDualMa, 3, 1, 2, sigBuf) == 2) {
+            state.alma_signal_1 = sigBuf[0];
+            state.alma_signal_2 = sigBuf[1];
+        } else {
+            // シグナルバッファ取得不可時はクロス判定で代替
+            state.alma_signal_1 = (state.alma_fast_1 > state.alma_slow_1) ? 1.0 : -1.0;
+            state.alma_signal_2 = (state.alma_fast_2 > state.alma_slow_2) ? 1.0 : -1.0;
         }
     }
 
@@ -303,8 +357,8 @@ bool UpdateSystemState(SSystemState& state) {
     if (isFirstUpdate) {
         isFirstUpdate = false;
         string regStr = (state.regime == REGIME_RANGE ? "RANGE" : (state.regime == REGIME_TREND ? "TREND" : "TRANSITION"));
-        PrintFormat("[Hybrid_DFA_EA] 初回状態取得成功: DFA Alpha=%.4f (Regime=%s), RSI[1]=%.2f, ALMA Fast[1]=%.5f Slow[1]=%.5f",
-                    state.alpha, regStr, state.smoothed_rsi_1, state.alma_fast_1, state.alma_slow_1);
+        PrintFormat("[Hybrid_DFA_EA] 初回状態取得成功: DFA Alpha=%.4f (Regime=%s), RSI[1]=%.2f, ALMA Fast[1]=%.5f Slow[1]=%.5f Signal[1]=%.1f",
+                    state.alpha, regStr, state.smoothed_rsi_1, state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
     }
 
     return true;
@@ -528,23 +582,43 @@ void OnTick() {
     }
 
     //------------------------------------------------------------------
-    // 3. トレンドポジション保有中のALMA逆交差による決済
+    // 3. トレンドポジション保有中のMA逆交差による決済
     //------------------------------------------------------------------
     if (InpUseTrendStrategy) {
-        // トレンドBUY保有中にデッドクロス発生
-        if (trendBuys > 0 && state.alma_fast_2 >= state.alma_slow_2 &&
-            state.alma_fast_1 < state.alma_slow_1) {
-            Print("[Hybrid_DFA_EA] "
-                  "トレンドBUY保有中にデッドクロスが発生したためクローズします。");
+        bool shouldCloseBuy = false;
+        bool shouldCloseSell = false;
+        bool useSchmitt = (InpTrendMaType == TREND_MA_ALMA && InpAlmaUseSchmittTrigger);
+
+        if (useSchmitt) {
+            // シュミットトリガー有効時: SignalState が弱気(-1.0)に転換した場合にBUY決済
+            if (trendBuys > 0 && state.alma_signal_1 < 0.0) {
+                shouldCloseBuy = true;
+            }
+            // SignalState が強気(+1.0)に転換した場合にSELL決済
+            if (trendSells > 0 && state.alma_signal_1 > 0.0) {
+                shouldCloseSell = true;
+            }
+        } else {
+            // 従来の直接クロス判定 (SMA / EMA / 通常ALMA)
+            if (trendBuys > 0 && state.alma_fast_2 >= state.alma_slow_2 &&
+                state.alma_fast_1 < state.alma_slow_1) {
+                shouldCloseBuy = true;
+            }
+            if (trendSells > 0 && state.alma_fast_2 <= state.alma_slow_2 &&
+                state.alma_fast_1 > state.alma_slow_1) {
+                shouldCloseSell = true;
+            }
+        }
+
+        if (shouldCloseBuy) {
+            PrintFormat("[Hybrid_DFA_EA] トレンドBUY決済 (弱気反転シグナル検知): Fast[1]=%.5f, Slow[1]=%.5f, Signal[1]=%.1f",
+                        state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
             ClosePositionsByStrategy(STRATEGY_TREND);
             trendBuys = 0;
         }
-        // トレンドSELL保有中にゴールデンクロス発生
-        if (trendSells > 0 && state.alma_fast_2 <= state.alma_slow_2 &&
-            state.alma_fast_1 > state.alma_slow_1) {
-            Print(
-                "[Hybrid_DFA_EA] "
-                "トレンドSELL保有中にゴールデンクロスが発生したためクローズします。");
+        if (shouldCloseSell) {
+            PrintFormat("[Hybrid_DFA_EA] トレンドSELL決済 (強気反転シグナル検知): Fast[1]=%.5f, Slow[1]=%.5f, Signal[1]=%.1f",
+                        state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
             ClosePositionsByStrategy(STRATEGY_TREND);
             trendSells = 0;
         }
@@ -588,31 +662,51 @@ void OnTick() {
         }
     }
 
-    // B. トレンド戦略シグナル (Dual ALMA Cross)
+    // B. トレンド戦略シグナル (Dual MA Cross)
     if (allowTrend) {
-        // BUY (ゴールデンクロス): Fast[2] <= Slow[2] && Fast[1] > Slow[1]
-        if (state.alma_fast_2 <= state.alma_slow_2 &&
-            state.alma_fast_1 > state.alma_slow_1) {
+        bool signalBuy = false;
+        bool signalSell = false;
+        bool useSchmitt = (InpTrendMaType == TREND_MA_ALMA && InpAlmaUseSchmittTrigger);
+
+        if (useSchmitt) {
+            // シュミットトリガー有効時: 非強気 (<= 0.0) から 強気 (+1.0) へのブレイクアウトでBUY
+            if (state.alma_signal_2 <= 0.0 && state.alma_signal_1 > 0.0) {
+                signalBuy = true;
+            }
+            // 非弱気 (>= 0.0) から 弱気 (-1.0) へのブレイクダウンでSELL
+            else if (state.alma_signal_2 >= 0.0 && state.alma_signal_1 < 0.0) {
+                signalSell = true;
+            }
+        } else {
+            // 従来の直接クロス判定 (SMA / EMA / 通常ALMA)
+            if (state.alma_fast_2 <= state.alma_slow_2 &&
+                state.alma_fast_1 > state.alma_slow_1) {
+                signalBuy = true;
+            }
+            else if (state.alma_fast_2 >= state.alma_slow_2 &&
+                     state.alma_fast_1 < state.alma_slow_1) {
+                signalSell = true;
+            }
+        }
+
+        if (signalBuy) {
             if (trendSells > 0) {
                 ClosePositionsByStrategy(STRATEGY_TREND);
                 trendSells = 0;
             }
             if (trendBuys == 0) {
-                PrintFormat("[Hybrid_DFA_EA] トレンドBUYシグナル検知: Alpha=%.4f (High=%.2f), Fast[1]=%.3f, Slow[1]=%.3f",
-                            state.alpha, InpDfaThresholdHigh, state.alma_fast_1, state.alma_slow_1);
+                PrintFormat("[Hybrid_DFA_EA] トレンドBUYシグナル検知: Alpha=%.4f (High=%.2f), Fast[1]=%.3f, Slow[1]=%.3f, Signal[1]=%.1f",
+                            state.alpha, InpDfaThresholdHigh, state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
                 ExecuteOrder(ORDER_TYPE_BUY, STRATEGY_TREND, state.atr);
             }
-        }
-        // SELL (デッドクロス): Fast[2] >= Slow[2] && Fast[1] < Slow[1]
-        else if (state.alma_fast_2 >= state.alma_slow_2 &&
-                 state.alma_fast_1 < state.alma_slow_1) {
+        } else if (signalSell) {
             if (trendBuys > 0) {
                 ClosePositionsByStrategy(STRATEGY_TREND);
                 trendBuys = 0;
             }
             if (trendSells == 0) {
-                PrintFormat("[Hybrid_DFA_EA] トレンドSELLシグナル検知: Alpha=%.4f (High=%.2f), Fast[1]=%.3f, Slow[1]=%.3f",
-                            state.alpha, InpDfaThresholdHigh, state.alma_fast_1, state.alma_slow_1);
+                PrintFormat("[Hybrid_DFA_EA] トレンドSELLシグナル検知: Alpha=%.4f (High=%.2f), Fast[1]=%.3f, Slow[1]=%.3f, Signal[1]=%.1f",
+                            state.alpha, InpDfaThresholdHigh, state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
                 ExecuteOrder(ORDER_TYPE_SELL, STRATEGY_TREND, state.atr);
             }
         }

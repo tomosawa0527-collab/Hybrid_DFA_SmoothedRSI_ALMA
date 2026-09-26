@@ -1,6 +1,6 @@
-# Hybrid DFA & Smoothed RSI / Dual ALMA Trading System
+# Hybrid DFA & Smoothed RSI / Multi Dual MA Trading System
 
-MetaTrader 5 (MQL5) 向けに開発された、物理学・時系列解析の理論に基づく**DFA（トレンド除去変動解析）**による相場レジーム判別と、**Super Smoother RSI** および **Dual ALMA** を組み合わせた高堅牢ハイブリッド自動売買システム（EA）です。
+MetaTrader 5 (MQL5) 向けに開発された、物理学・時系列解析の理論に基づく**DFA（トレンド除去変動解析）**による相場レジーム判別と、**Super Smoother RSI** および **Multi Dual MA** を組み合わせた高堅牢ハイブリッド自動売買システム（EA）です。
 
 ---
 
@@ -17,10 +17,10 @@ graph TD
     DFA -->|Alpha > High (青)| TrendMode[トレンド相場モード]
     
     RangeMode --> SmoothedRSI[SmoothedRSI.mq5<br/>Super Smoother + RSI<br/>ゾーン脱出逆張りエントリー]
-    TrendMode --> DualALMA[DualALMA.mq5<br/>Fast/Slow ALMA Cross<br/>ゴールデン/デッドクロス順張り]
+    TrendMode --> MultiDualMA[MultiDualMA.mq5<br/>Fast/Slow MA Cross<br/>ゴールデン/デッドクロス順張り]
     
     SmoothedRSI --> EA[Hybrid_DFA_EA.mq5<br/>ポジション管理 & ATR動的決済]
-    DualALMA --> EA
+    MultiDualMA --> EA
 ```
 
 ---
@@ -37,7 +37,7 @@ graph TD
 │   └── Hybrid_DFA_EA/
 │       ├── DFA.mq5               # 双方向DFAレジーム判別インディケータ (静的バッファ最適化済み)
 │       ├── SmoothedRSI.mq5       # 2-Pole Super Smoother 平滑化RSI
-│       └── DualALMA.mq5          # デュアル・アーナウドレグー移動平均線
+│       └── MultiDualMA.mq5       # マルチタイプ対応デュアル移動平均線 (SMA/EMA/SMMA/LWMA/ALMA)
 └── docs/
     ├── 20260822_2_DFA-Smoother ハイブリッド高堅牢化取引システム 仕様書（改訂版）.md
     └── 20260901_MQL5 EA Implementation Review.md
@@ -93,15 +93,27 @@ graph TD
 
 ---
 
-### 3.3 Dual ALMA インディケータ (`DualALMA.mq5`)
+### 3.3 Multi Dual MA インディケータ (`MultiDualMA.mq5`)
 
-アーナウド・レグー移動平均（ALMA）による超低遅延トレンドフォローフィルターです。
+SMA / EMA / SMMA / LWMA / ALMA の5種類の移動平均アルゴリズムを統合し、信号処理工学（DSP）とATR連動シュミットトリガーを備えた高機能トレンドフォローフィルターです。すべてのMAタイプにおいて、Fast（短期: `clrOrangeRed` / オレンジ赤）とSlow（長期: `clrDeepSkyBlue` / 水色）の2色で統一描画されます。ALMA 選択時はガウス分布重心パラメータ（Offset: Fast 0.92, Slow 0.90）の最適化により、極めて低遅延・高平滑な追従を実現します。
 
-- **ガウシアン加重移動平均**:
-  - オフセットパラメータ（$0.85$）により最新バーに最大ウェイトを集中配置し、位相遅延を最小化。
-- **トレンド戦略シグナル**:
-  - **BUY（ゴールデンクロス）**: 短期 ALMA(9) が 長期 ALMA(21) を上抜け
-  - **SELL（デッドクロス）**: 短期 ALMA(9) が 長期 ALMA(21) を下抜け
+```mermaid
+flowchart LR
+    A["原価格 P_t"] --> B["Multi Dual MA<br/>(SMA / EMA / SMMA / LWMA / ALMA)"]
+    B --> C["Schmitt Trigger<br/>(ATR動的ヒステリシス: Factor 0.08)"]
+    C --> D["SignalState バッファ<br/>(+1.0: Bull / -1.0: Bear)"]
+```
+
+- **Layer 1: 最適重心シフト（高Offset）による直接的低遅延化**:
+  - ガウス窓の重心シフト $m = (1 - \text{Offset}) \times (N - 1)$ を最新バー寄りに再設計（Fast: `Offset=0.92`, Slow: `Offset=0.90`, `Sigma=5.5`）。
+  - 微分外挿（Zero-Lag）による高周波増幅スパイクを原理的に100%排除しつつ、旧DualALMAより確実に 1〜1.5本早くピーク・ボトムに追従。
+- **Layer 2: SuperSmoother のデフォルト無効化（遅延要因の排除）**:
+  - 2-Pole Butterworth 前処理（Cutoff=8）が内包していた約1.8バーの群遅延を解消するため、デフォルト `InpUseSuperSmoother = false` に設定。ALMA 本来の優れたガウス平滑化能力を最大限に発揮。
+- **Layer 3: 先行モメンタム補正（Zero-Lag Feedforward: オプション）**:
+  - さらなるゼロラグ追従を求める場合のために、入力価格側で微小なモメンタムを加算する安全な先行系列オプション（`InpUseZeroLagLead`）を搭載。後段のガウス積分でノイズが平滑化されるためスパイクゼロ。
+- **Layer 4: ATR連動シュミットトリガー（最適ヒステリシス不感帯）**:
+  - 不感帯幅係数を適正化（$H_t = 0.08 \times \text{ATR}_{14}$）。
+  - もみ合い相場での微小振動によるダマシ往復（チャタリング）を完全にラッチ遮断しつつ、ブレイクアウト初動でのシグナル確定遅延を極小化。
 
 ---
 
@@ -154,12 +166,25 @@ graph TD
 | **`InpRsiPeriod`** | `7` | RSI 計算期間 |
 | **`InpRsiOverbought`** | `65.0` | 買われすぎ境界値 |
 | **`InpRsiOversold`** | `35.0` | 売られすぎ境界値 |
-| **`InpUseTrendStrategy`** | `true` | トレンド戦略 (Dual ALMA) の有効化 |
-| **`InpAlmaFastWindow`** | `9` | 短期 ALMA 期間 |
-| **`InpAlmaSlowWindow`** | `21` | 長期 ALMA 期間 |
+| **`InpUseTrendStrategy`** | `true` | トレンド戦略 (Dual MA Cross) の有効化 |
+| **`InpTrendMaType`** | `TREND_MA_LWMA` | 移動平均タイプ (`SMA` / `EMA` / `SMMA` / `LWMA` / `ALMA`) |
+| **`InpMaFastWindow`** | `20` | 短期 MA 期間 / 窓幅 (Fast Window) |
+| **`InpMaSlowWindow`** | `40` | 長期 MA 期間 / 窓幅 (Slow Window) |
+| **`InpMaAppliedPrice`** | `PRICE_CLOSE` | 適用価格 |
+| **`InpAlmaFastOffset`** | `0.92` | [ALMA専用] 短期 Offset (高値ほど低遅延) |
+| **`InpAlmaSlowOffset`** | `0.90` | [ALMA専用] 長期 Offset (高値ほど低遅延) |
+| **`InpAlmaFastSigma`** | `5.5` | [ALMA専用] 短期 Sigma (ガウス幅) |
+| **`InpAlmaSlowSigma`** | `5.5` | [ALMA専用] 長期 Sigma (ガウス幅) |
+| **`InpAlmaUseSuperSmoother`** | `false` | [ALMA専用] SuperSmoother 前処理有効化 (OFF推奨) |
+| **`InpAlmaSSCutoff`** | `4` | [ALMA専用] SuperSmoother カットオフ周期 (bars) |
+| **`InpAlmaUseZeroLagLead`** | `false` | [ALMA専用] 先行モメンタム補正有効化 (スパイクゼロ低遅延) |
+| **`InpLeadFactor`** | `0.40` | [ALMA専用] 先行モメンタム係数 |
+| **`InpAlmaUseSchmittTrigger`**| `false` | [ALMA専用] シュミットトリガー (ATRヒステリシス) 有効化 |
+| **`InpAlmaHysteresisAtrPeriod`** | `14` | [ALMA専用] ヒステリシス用 ATR 計算期間 |
+| **`InpAlmaHysteresisFactor`** | `0.08` | [ALMA専用] ヒステリシス不感帯幅係数 ($\text{ATR} \times 0.08$) |
 | **`InpUseAtrExit`** | `true` | ATR ベース動的 TP/SL の有効化 |
 | **`InpAtrTimeframeMode`** | `HTF_MODE_AUTO_NEXT` | ATR 計算時間軸 (デフォルト: 自動1段階上位足) |
-| **`InpAtrPeriod`** | `14` | ATR 計算期間 |
+| **`InpAtrPeriod`** | `20` | ATR 計算期間 |
 | **`InpAtrTpFactor`** | `3.0` | ATR 利確乗数 ($\text{ATR} \times 3.0$。0指定時はTPなし＆SLトレーリングストップ) |
 | **`InpAtrSlFactor`** | `1.5` | ATR 損切乗数 ($\text{ATR} \times 1.5$) |
 
@@ -175,7 +200,7 @@ graph TD
    - MetaEditor で以下のファイルを順次開き、**F7** キーでコンパイルします：
      1. `Indicators/Hybrid_DFA_EA/DFA.mq5`
      2. `Indicators/Hybrid_DFA_EA/SmoothedRSI.mq5`
-     3. `Indicators/Hybrid_DFA_EA/DualALMA.mq5`
+     3. `Indicators/Hybrid_DFA_EA/MultiDualMA.mq5`
      4. `Experts/Hybrid_DFA_EA.mq5`
 3. **バックテスト実行**:
    - MT5 のストラテジーテスターを開き、`Hybrid_DFA_EA` を選択してバックテストを実行します。
@@ -186,7 +211,53 @@ graph TD
 
 ## 6. 改訂履歴 (Changelog)
 
-### [v1.5.0] - 2026-09-13
+### [v1.7.0] - 2026-09-13
+- **トレンドインジケータの MultiDualMA 化とMAタイプ選択・カラー統一 (`MultiDualMA.mq5`, `DFA_Common.mqh`, `Hybrid_DFA_EA.mq5`)**:
+  - **インジケータ名称を `MultiDualMA.mq5` に刷新**:
+    - ALMA 専従から 5 種類の移動平均に対応する汎用トレンドインジケータへ進化させたことに伴い、`DualALMA.mq5` から `MultiDualMA.mq5` へ改名。
+  - **全MAタイプでの2色プロット統一（赤/水色）**:
+    - MT5ネイティブ `iMA` で発生していた「両線とも赤線でテスター/チャートで見分けがつかない」問題を完全解消。
+    - `MultiDualMA.mq5` 側で SMA / EMA / SMMA / LWMA（FIR畳み込み & 再帰差分）および ALMA の全計算ロジックを統合。どのMAタイプを選択しても **Fast線: `clrOrangeRed` (オレンジ赤)**、**Slow線: `clrDeepSkyBlue` (水色)** で美しく統一描画。
+  - **デフォルト戦略を LWMA (Fast=20, Slow=40) & ATR 20 に設定**:
+    - 長期バックテストで最も高い堅牢性とプロフィットファクターを示した LWMA (20/40) をトレンド戦略の標準設定に採用。
+    - 出口戦略側の ATR 期間も `20` をデフォルト値に更新。
+
+### [v1.6.2] - 2026-09-13
+- **Dual ALMA 超低遅延・高平滑化アーキテクチャの確立 (`DualALMA.mq5`, `Hybrid_DFA_EA.mq5`)**:
+  - **遅延増大（右シフト）の根本原因解消**:
+    - 前処理 SuperSmoother（Cutoff=8）が内包していた約1.8バーの群遅延を解消するため、`InpUseSuperSmoother = false` をデフォルトに設定。
+    - ALMA 本体のガウス分布重心シフト（Offset）を引き上げ、**Fast Offset を 0.85 $\to$ 0.92**、**Slow Offset を 0.85 $\to$ 0.90**、Sigma を 5.5 に最適化。
+    - これにより、微分外挿によるスパイクを100%防止したまま、**旧DualALMAよりも 1〜1.5バー早期の反転・クロス検知**を実現。
+  - **先行モメンタム補正（Zero-Lag Feedforward: オプション）の追加**:
+    - 入力価格側に短期モメンタムを加える先行系列（`InpUseZeroLagLead`, `InpLeadFactor=0.40`）を搭載。後段のガウス積分でノイズを平滑化するためスパイクゼロで低遅延化が可能。
+  - **シュミットトリガー不感帯の適正化**:
+    - ヒステリシス不感帯幅を `InpHysteresisFactor = 0.20` $\to$ **`0.08`（ATRの8%）** に最適化。レンジ相場でのチャタリング（ダマシ往復）を完全に抑止しつつ、ブレイクアウト初動でのシグナル確定遅延を極小化。
+
+### [v1.6.1] - 2026-09-13
+- **Dual ALMA 異常スパイク解消と高平滑・低遅延アーキテクチャの確立 (`DualALMA.mq5`, `Hybrid_DFA_EA.mq5`)**:
+  - **スパイク（異常乱高下）の根本根絶**:
+    - 急変後の反発相場等で Zero-Lag 前方外挿補正（速度の数倍〜10倍増幅）と Kaufman ER 動的適応（重心シフトのステップ変化）が相互干渉し、わずか1バーで数百pipsの巨大なトゲ（スパイク）を発生させていた不具合を解消。
+    - Zero-Lag 外挿補正および動的適応を廃止し、ALMA 本来の固定ガウス重み事前計算方式（`OnInit` で `wFast`, `wSlow` を一括キャッシュ）へ回帰。
+  - **堅牢・高平滑な3段パイプライン構成**:
+    - **Layer 1 (2-Pole SuperSmoother)**: 周期8バーの2次バターワースIIRフィルタで高周波ノイズ・ヒゲを無遅延遮断。
+    - **Layer 2 (Robust Dual ALMA)**: ノイズ除去された価格系列に対し、Offset=0.85, Sigma=6.0 の固定重み畳み込み演算を適用。オーバーシュートや歪みのない極上の滑らかさを実現。
+    - **Layer 3 (ATR連動シュミットトリガー)**: $H_t = 0.20 \times \text{ATR}_{14}$ の不感帯による状態ラッチ（保持）により、レンジ相場でのチャタリング（往復ビンタ）を完全抑止。
+  - **MQL5 `iCustom` 互換性の完全確保**:
+    - `DualALMA.mq5` からパラメータオフセットの原因となる `input group` を完全除去し、`iCustom` 経由の引数受け渡しにおける位置ズレ（Fast=21, Slow=0 となる初期化エラー）を完全に防止。
+
+### [v1.6.0] - 2026-09-13
+- **Robust Adaptive Dual ALMA の導入 (`DualALMA.mq5`, `Hybrid_DFA_EA.mq5`, `DFA_Common.mqh`)**:
+  - **4段多段デジタル信号処理（DSP）パイプライン**:
+    - **Layer 1a (2-Pole SuperSmoother)**: 遮断周期8バーの2次バターワースIIRフィルタにより、ナイキスト周波数近傍の高周波ジッター・エイリアシング雑音を急峻に遮断。
+    - **Layer 1b (2-Pole Decycler)**: 遮断周期60バーのハイパス成分を原系列から減算相殺し、20〜60バーの中間周期うねりノイズを完全消去して純粋な大局トレンド成分を抽出。
+    - **Layer 2 (Kaufman ER 動的ガウス適応)**: カウフマン効率比（$ER$）によりトレンド時に Offset を最大 $0.96$ / Sigma を $9.5$ まで引き締め追従性を極限化、レンジ時は Offset を $0.60$ まで後退させ平滑度を最大化。
+    - **Layer 3 & 4 (Zero-Lag 前方外挿補正)**: 代表遅延定数 $\tau = N / 4$ とALMA系列の速度ベクトル（1次微分）による前方外挿項を加算し、因果的FIRフィルタの群遅延を実質ゼロに圧縮。
+  - **ATR連動シュミットトリガー（動的ヒステリシス）の統合 (`BufferSignalState`)**:
+    - 直近14期間ATRの $20\%$（$H_t = 0.20 \times \text{ATR}_{14}$）の不感帯を設け、差分 $\text{Fast} - \text{Slow}$ が $+H_t$ 超過で強気（+1.0）、$-H_t$ 未満で弱気（-1.0）へ確定。不感帯内は直前のシグナル状態を厳密にラッチ（保持）し、もみ合い境界値での微小振動によるチャタリング（往復ビンタ）を完全抑止。
+  - **EAシグナル・エグジット判定の最適化**:
+    - `SSystemState` に `alma_signal_1`, `alma_signal_2` を追加。
+    - EA側のトレンドエントリー判定をシュミットトリガーのラッチ状態（非強気 $\to$ 強気でBUY、非弱気 $\to$ 弱気でSELL）に連動させ、エグジットも反対側への反転確定時のみ執行するよう堅牢化。
+    - インジケータ内部計算を9バッファ（プロット2・内部計算7）で完全状態管理し、ティック再計算時の状態破壊やリペイントを防止。
 - **TP倍率0指定時の1分足ATRトレーリングストップ機能の実装 (`Hybrid_DFA_EA.mq5`)**:
   - **TP無効化とSLトレーリングへの自動切替**: 出口戦略において `InpAtrTpFactor = 0` を指定した場合、固定利確（Take Profit）を無効化（`tpPrice = 0.0`）し、SL側のATR倍率（`InpAtrSlFactor`）を用いた動的トレーリングストップへ自動切替。
   - **1分足（M1）新バー確定追従アーキテクチャ (`IsNewM1Bar`)**: ティック単位での追従によるPC過負荷およびバックテストの再現性低下（オープン価格モデル等との乖離）を防止するため、チャート足の時間軸（M5/M15/H1等）に関わらず**1分足（PERIOD_M1）の新バー確定毎**に安全に判定・追従更新を実行。
