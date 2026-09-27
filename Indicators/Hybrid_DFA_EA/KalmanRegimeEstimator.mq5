@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|                                       KalmanRegimeEstimator2.mq5 |
+//|                                        KalmanRegimeEstimator.mq5 |
 //|                                  Copyright 2026, Quant Research  |
 //|    Smooth Trend Model (Analytical Closed-Form Calibration) Regime|
 //+------------------------------------------------------------------+
