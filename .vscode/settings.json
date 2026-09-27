@@ -23,5 +23,8 @@
         "*.mqh": "cpp",
         "*.mq4": "cpp",
         "*.mq5": "cpp"
+    },
+    "[cpp]": {
+        "editor.formatOnSave": false
     }
 }
