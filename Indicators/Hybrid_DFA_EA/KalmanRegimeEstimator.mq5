@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright   "Copyright 2026, Quant Research"
 #property link        "https://www.mql5.com"
-#property version     "4.00"
+#property version     "4.10"
 #property description "平滑トレンドモデル・Rice推定量＆極配置解析解による自律客観キャリブレーション完全版"
 #property indicator_separate_window
 #property indicator_buffers 4
@@ -150,8 +150,8 @@ bool RunAnalyticalCalibration(const double &log_prices[],
 
    uint start_time = GetTickCount();
 
-   // 1. ノイズ分散 R の計測: 二階差分分散推定量 (Rice's Estimator)
-   //    トレンド成分 (低周波) を二階差分で完全に消去し、純粋な高周波観測ノイズ分散を抽出
+   // 1. ノイズ分散 R の計測: 二階差分分散推定量 (Rice's Estimator, Rice 1984)
+   //    トレンド成分 (低周波) を二階差分で消去し、純粋な高周波観測ノイズ分散を直接抽出
    //    Var(Delta^2 y_t) = 6 * R
    double sum_sq_diff2 = 0.0;
    int diff_count = 0;
@@ -172,12 +172,12 @@ bool RunAnalyticalCalibration(const double &log_prices[],
    if(estimated_r < 1e-9) estimated_r = 1e-9;
    if(estimated_r > 1.0)  estimated_r = 1.0;
 
-   // 2. 平滑トレンド制約: 水準ジャンプを禁止
+   // 2. 平滑トレンド制約: 水準ジャンプを禁止 (Integrated Random Walk)
    out_q_mu = 0.0;
 
    // 3. 傾きプロセスノイズ q_beta の閉じた解析解導出
-   //    平滑トレンドカルマンフィルター / HPフィルターの極配置関係式:
-   //    tau = (R / q_beta)^(1/4)  ===>  q_beta = R / (tau^4)
+   //    平滑トレンドカルマンフィルター / HPフィルターの極配置関係式 (Harvey & Jaeger 1993):
+   //    lambda = R / q_beta = tau^4  ===>  q_beta = R / (tau^4)
    double tau4 = MathPow(target_lag, 4.0);
    out_q_beta = estimated_r / tau4;
    out_r      = estimated_r;
@@ -188,13 +188,13 @@ bool RunAnalyticalCalibration(const double &log_prices[],
 
    Print("================================================================================");
    PrintFormat("[★ 解析的自律キャリブレーション完了 ★ 所要時間: %d ms | サンプル: %d 本]", elapsed, total);
-   PrintFormat(" - モデル設計構造     : 平滑トレンドモデル (Smooth Trend Model: q_mu = 0 固定)");
-   PrintFormat(" - 推定 観測ノイズ分散     (R)      : %.3e (Rice二階差分分散推定量より実測)", out_r);
-   PrintFormat(" - 逆算 傾きプロセスノイズ (q_beta) : %.3e (解析解: R / tau^4)", out_q_beta);
-   PrintFormat(" - 設定 水準プロセスノイズ (q_mu)   : 0.0 (固定制約)");
-   PrintFormat(" - ターゲット時定数        (tau)    : %.1f 本", target_lag);
-   PrintFormat(" - 理論実効ラグ時定数      (検証)   : 約 %.1f 本", effective_lag);
-   PrintFormat(" - 実効ノイズ比率          (q_b / R): %.3e", ratio);
+   PrintFormat(" - モデル設計構造       : 平滑トレンドモデル (Smooth Trend Model: q_mu = 0 固定)");
+   PrintFormat(" - 推定 観測ノイズ分散       (R)      : %.3e (Rice二階差分推定量より実測)", out_r);
+   PrintFormat(" - 逆算 傾きプロセスノイズ   (q_beta) : %.3e (極配置解析解: R / tau^4)", out_q_beta);
+   PrintFormat(" - 設定 水準プロセスノイズ   (q_mu)   : 0.0 (固定制約)");
+   PrintFormat(" - 指定 ターゲット時定数     (tau)    : %.1f 本", target_lag);
+   PrintFormat(" - 設定 フィルタ時定数確認   (半値幅) : 約 %.1f 本 (代数整合確認)", effective_lag);
+   PrintFormat(" - 実効ノイズ比率            (q_b / R): %.3e", ratio);
    Print("================================================================================");
 
    return(true);
@@ -454,9 +454,15 @@ int OnCalculate(const int rates_total,
 
       int start = 0;
       if(prev_calculated > 0)
+      {
          start = prev_calculated - 1;
+      }
       else
-         g_last_valid_price = close[0];
+      {
+         // InpAppliedPrice を厳密に反映して初期シード
+         double p0 = GetAppliedPrice(InpAppliedPrice, open, high, low, close, 0);
+         g_last_valid_price = (p0 > 0.0) ? p0 : close[0];
+      }
 
       for(int i = start; i < rates_total && !IsStopped(); i++)
       {
@@ -546,7 +552,9 @@ int OnCalculate(const int rates_total,
 
       g_tf_prev_rates_total = 0;
       g_last_mapped_tf_idx  = 0;
-      g_tf_last_valid_price = g_tf_rates[0].close;
+      // InpAppliedPrice を厳密に反映して初期シード
+      double p0 = GetAppliedPrice(InpAppliedPrice, g_tf_rates[0]);
+      g_tf_last_valid_price = (p0 > 0.0) ? p0 : g_tf_rates[0].close;
    }
 
    int tf_rates_total = ArraySize(g_tf_rates);
