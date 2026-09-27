@@ -7,7 +7,7 @@
 #property link "https://www.mql5.com"
 #property version "1.60"
 
-#include "..\Include\Hybrid_DFA_EA\DFA_Common.mqh"
+#include "..\..\Include\Hybrid_DFA_EA\DFA_Common.mqh"
 #include <Trade\PositionInfo.mqh>
 #include <Trade\Trade.mqh>
 
