@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright   "Copyright 2026, Quant Research"
 #property link        "https://www.mql5.com"
-#property version     "2.20"
-#property description "対数価格局所線形トレンドモデルによるカルマンフィルタ・レジーム推定器 (真のO(1)完全版)"
+#property version     "2.40"
+#property description "対数価格局所線形トレンドモデルによるカルマンフィルタ・レジーム推定器 (真のO(1)・最適ノイズ比完全版)"
 #property indicator_separate_window
 #property indicator_buffers 4
 #property indicator_plots   1
@@ -34,8 +34,10 @@ input ENUM_TIMEFRAMES InpTimeframe          = PERIOD_CURRENT; // 計算対象タ
 input bool            InpAutoTimeframeScale = true;           // 時間足に応じたノイズ自動スケーリング (Δt補正)
 
 input group "=== カルマンフィルター パラメータ (日足基準対数空間) ==="
-input double InpQMu                 = 1e-5;       // プロセスノイズ分散 (水準: q_mu, 日足基準)
-input double InpQBeta               = 1e-5;       // プロセスノイズ分散 (傾き: q_beta, 日足基準)
+// 対数空間における最適比率 (Q/R = 1e-5): 日足のR=1e-4に対してQ=1e-9が適正値
+// (※Q=1e-9はチューニング要素。1e-5と大きくすると初動を早くできるがトレンドを検知できない)
+input double InpQMu                 = 1e-9;       // プロセスノイズ分散 (水準: q_mu, 日足基準)
+input double InpQBeta               = 1e-9;       // プロセスノイズ分散 (傾き: q_beta, 日足基準)
 input double InpR                   = 1e-4;       // 観測ノイズ分散 (R, 日足基準)
 input double InpInitialP            = 1.0;        // 初期誤差共分散 (P0: 対数空間では1.0で十分大)
 
@@ -80,8 +82,8 @@ int         g_last_mapped_tf_idx  = 0;// チャート足へマッピングした
 double      g_tf_last_valid_price = 0.0;// 上位足用の直前有効価格 (異常値フォールバック用)
 
 // スケーリング後の実効ノイズパラメータ
-double g_scaled_q_mu   = 1e-5;
-double g_scaled_q_beta = 1e-5;
+double g_scaled_q_mu   = 1e-9;
+double g_scaled_q_beta = 1e-9;
 double g_scaled_r      = 1e-4;
 double g_scaled_p0     = 1.0;
 ENUM_TIMEFRAMES g_calc_tf = PERIOD_CURRENT;
@@ -453,7 +455,7 @@ int OnCalculate(const int rates_total,
       }
 
       // キャッシュ末尾と取得データが不連続（2本以上の欠落や時間巻き戻し）の場合、
-      // 安全にキャッシュを破棄してフルフェッチへフォールバック
+      // 安全にキャッシュを破棄してフルフェッチへ
       if(match_idx == -1)
       {
          g_tf_prev_rates_total = 0;
@@ -469,12 +471,10 @@ int OnCalculate(const int rates_total,
 
          if(temp_time == g_tf_rates[last_idx].time)
          {
-            // 同一バー（未確定足）の価格更新
             g_tf_rates[last_idx] = temp_rates[m];
          }
          else if(temp_time > g_tf_rates[last_idx].time)
          {
-            // 新規バーの確定・追加
             int new_size = last_idx + 2;
             if(ArrayResize(g_tf_rates, new_size) > 0)
             {
@@ -488,7 +488,6 @@ int OnCalculate(const int rates_total,
    if(tf_rates_total < 2)
       return(0);
 
-   // 上位足キャッシュ配列の拡張確保
    if(ArraySize(g_tf_state_history) < tf_rates_total)
    {
       int new_alloc = tf_rates_total + 256;
@@ -505,12 +504,10 @@ int OnCalculate(const int rates_total,
    int tf_start = 0;
    if(prev_calculated > 0 && g_tf_prev_rates_total > 0 && tf_rates_total >= g_tf_prev_rates_total)
    {
-      // 前回の未確定足（g_tf_prev_rates_total - 1）から再開
       tf_start = g_tf_prev_rates_total - 1;
    }
    else
    {
-      // 初回またはデータリセット時
       tf_start = 0;
       double p0 = GetAppliedPrice(InpAppliedPrice, g_tf_rates[0]);
       g_tf_last_valid_price = (p0 > 0.0) ? p0 : g_tf_rates[0].close;
@@ -520,7 +517,6 @@ int OnCalculate(const int rates_total,
    {
       double raw_p = GetAppliedPrice(InpAppliedPrice, g_tf_rates[k]);
 
-      // グローバル保持された直前有効価格による安全フォールバック
       if(raw_p <= 0.0)
          raw_p = g_tf_last_valid_price;
       else
@@ -546,14 +542,12 @@ int OnCalculate(const int rates_total,
       g_tf_regimes[k] = r;
    }
 
-   // 計算済み上位足バー数を記録
    g_tf_prev_rates_total = tf_rates_total;
 
    // 3. 上位足の計算結果をチャート足（下位足）にステップ状にマッピング (O(1))
    int chart_start = (prev_calculated > 0) ? prev_calculated - 1 : 0;
    int tf_idx = 0;
 
-   // 前回のマッピング位置から継続探索することで O(1) に最適化
    if(chart_start > 0 && g_last_mapped_tf_idx >= 0 && g_last_mapped_tf_idx < tf_rates_total)
    {
       tf_idx = g_last_mapped_tf_idx;
@@ -571,13 +565,11 @@ int OnCalculate(const int rates_total,
    {
       datetime bar_time = time[i];
 
-      // チャート足時刻が属する上位足バーのインデックスを進める (通常 0〜1 回のみループ)
       while(tf_idx + 1 < tf_rates_total && g_tf_rates[tf_idx + 1].time <= bar_time)
       {
          tf_idx++;
       }
 
-      // 直前確定足のマッピングインデックスを保持
       if(i < rates_total - 1)
       {
          g_last_mapped_tf_idx = tf_idx;
