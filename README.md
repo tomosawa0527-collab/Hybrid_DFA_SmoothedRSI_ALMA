@@ -1,26 +1,28 @@
-# Hybrid DFA & Smoothed RSI / Multi Dual MA Trading System
+# Hybrid Kalman / DFA & Smoothed RSI / Multi Dual MA Trading System
 
-MetaTrader 5 (MQL5) 向けに開発された、物理学・時系列解析の理論に基づく**DFA（トレンド除去変動解析）**による相場レジーム判別と、**Super Smoother RSI** および **Multi Dual MA** を組み合わせた高堅牢ハイブリッド自動売買システム（EA）です。
+MetaTrader 5 (MQL5) 向けに開発された、物理学・時系列解析の理論に基づく**カルマンフィルター（平滑局所線形トレンドモデル）**および**DFA（トレンド除去変動解析）**による相場レジーム判別と、**Super Smoother RSI** および **Multi Dual MA** を組み合わせた高堅牢ハイブリッド自動売買システム（EA）です。
 
 ---
 
 ## 1. システム概要
 
-相場のランダムウォーク性（フラクタル構造）をリアルタイムに解析し、**「レンジ相場」「トレンド相場」「遷移相場（中立）」**を厳密に分離した上で、それぞれの環境に特化した最適戦略を自動で切り替えて執行します。
+相場の統計的ドリフトと局所傾き（トレンド方向および強さ）をリアルタイムに解析し、**「上昇トレンド相場」「下降トレンド相場」「レンジ相場」**を厳密に分離した上で、それぞれの環境に特化した最適戦略を自動で切り替えて執行します。
 
 ```mermaid
 graph TD
-    Market[MT5 市場データ] --> DFA[DFA.mq5<br/>相場レジーム判別]
+    Market[MT5 市場データ] --> Kalman[KalmanRegimeEstimator.mq5<br/>1段階上位足MTF レジーム推定]
     
-    DFA -->|Alpha < Low (赤)| RangeMode[レンジ相場モード]
-    DFA -->|Low <= Alpha <= High (グレー)| WaitMode[中立・遷移モード<br/>(エントリー静観)]
-    DFA -->|Alpha > High (青)| TrendMode[トレンド相場モード]
+    Kalman -->|Z >= 2.0 (青: 上昇トレンド)| UpTrendMode[上昇トレンドモード]
+    Kalman -->|-2.0 < Z < 2.0 (グレー: レンジ)| RangeMode[レンジ相場モード]
+    Kalman -->|Z <= -2.0 (赤: 下降トレンド)| DownTrendMode[下降トレンドモード]
     
+    UpTrendMode --> TrendBuy[MultiDualMA.mq5<br/>ゴールデンクロス BUY のみ許可]
+    DownTrendMode --> TrendSell[MultiDualMA.mq5<br/>デッドクロス SELL のみ許可]
     RangeMode --> SmoothedRSI[SmoothedRSI.mq5<br/>Super Smoother + RSI<br/>ゾーン脱出逆張りエントリー]
-    TrendMode --> MultiDualMA[MultiDualMA.mq5<br/>Fast/Slow MA Cross<br/>ゴールデン/デッドクロス順張り]
     
-    SmoothedRSI --> EA[Hybrid_DFA_EA.mq5<br/>ポジション管理 & ATR動的決済]
-    MultiDualMA --> EA
+    TrendBuy --> EA[Hybrid_DFA_EA.mq5<br/>ポジション管理 & ATR動的決済]
+    TrendSell --> EA
+    SmoothedRSI --> EA
 ```
 
 ---
@@ -29,16 +31,20 @@ graph TD
 
 ```text
 ├── Experts/
-│   └── Hybrid_DFA_EA.mq5         # メイン自動売買EA (ポジション管理・発注制御)
+│   └── Hybrid_DFA_EA/
+│       ├── Hybrid_DFA_EA.mq5     # メイン自動売買EA (カルマンレジーム判定・ポジション管理・発注制御)
+│       └── KalmanRegimeEA.mq5    # カルマンフィルター特化型トレンドフォローEA
 ├── Include/
 │   └── Hybrid_DFA_EA/
 │       └── DFA_Common.mqh        # 共通定義・資金管理・注文執行補助・レジーム状態遷移機械
 ├── Indicators/
 │   └── Hybrid_DFA_EA/
+│       ├── KalmanRegimeEstimator.mq5 # 平滑トレンドモデル自律キャリブレーション型カルマンレジーム推定
 │       ├── DFA.mq5               # 双方向DFAレジーム判別インディケータ (静的バッファ最適化済み)
 │       ├── SmoothedRSI.mq5       # 2-Pole Super Smoother 平滑化RSI
 │       └── MultiDualMA.mq5       # マルチタイプ対応デュアル移動平均線 (SMA/EMA/SMMA/LWMA/ALMA)
 └── docs/
+    ├── kalman_regime_estimator.md # カルマンレジーム推定インジケーター技術仕様書
     ├── 20260822_2_DFA-Smoother ハイブリッド高堅牢化取引システム 仕様書（改訂版）.md
     └── 20260901_MQL5 EA Implementation Review.md
 ```
@@ -47,7 +53,23 @@ graph TD
 
 ## 3. 主要コンポーネント詳細
 
-### 3.1 DFA（Detrended Fluctuation Analysis）インディケータ (`DFA.mq5`)
+### 3.1 カルマンレジーム推定インディケータ (`KalmanRegimeEstimator.mq5`)
+
+対数価格空間における平滑局所線形トレンドモデル（Smooth Trend Model）に基づき、価格の局所的傾き（$\beta$）と推定誤差共分散（$P_{11}$）から統計的検定統計量（$Z$ スコア）をリアルタイムに推定するインディケータです。
+
+- **対数価格空間（Log-Price Space）でのモデル化**:
+  - $y_t = \ln(P_t)$ を観測系列とすることで幾何ブラウン運動（対数正規過程）に完全適合し、価格水準に依存しないスケール不変性を獲得。
+- **Rice推定量 × 極配置解析解による自律客観キャリブレーション**:
+  - 過去バーの2階差分分散推定量（Rice's Estimator）から高周波観測ノイズ分散 $R$ を直接計測。
+  - ターゲット時定数 $\tau$（推奨: 8〜15本）から極配置解析解 $q_\beta = R / \tau^4$ により傾きプロセスノイズを代数的に逆算。カーブフィッティングを排除した客観的パラメータ設定を実現。
+- **統計的無次元スコア（$Z$ スコア）とヒステリシス構造**:
+  - 傾き $\beta$ とその推定誤差分散 $P_{11}$ から $z = \beta / \sqrt{P_{11}}$ を算出し、$|z| \ge 2.0$（トレンド突入）および $|z| \le 1.0$（トレンド離脱）のヒステリシスにより境界でのチャタリングを完全遮断。
+- **真の $\mathcal{O}(1)$ マルチタイムフレーム（MTF）対応**:
+  - 上位足（例: M15チャート上でM30やH1）のカルマンフィルタ状態を増分更新し、現在足チャート上に完全同期展開。
+
+---
+
+### 3.2 DFA（Detrended Fluctuation Analysis）インディケータ (`DFA.mq5`)
 
 時系列の対数リターン系列 $\Delta \ln P_t$ に対して DFA-1 解析を行い、ハースト指数 $H$ に相当するスケーリング指数 $\alpha$ を算出します。
 
@@ -55,32 +77,14 @@ graph TD
   - **カウフマン効率比（$ER$）によるトレンド復元**: 純粋なDFA-1が消去してしまう大局的ドリフト（一本調子の強いトレンド成分）を、ウィンドウ内の対数リターンから効率比 $ER \in [0.0, 1.0]$ として高速抽出。
   - **ジリ高・低ボラ上昇相場（$ER \ge 0.20$）の完全救済**: 為替の微細構造ノイズによる平均回帰誤認（$\alpha < 0.45$ 赤線）を排除し、真のトレンド（$\alpha \ge 0.55$ 青線）へ自動昇格。
   - **天井圏・乱高下もみ合い相場の偽トレンド抑制**: 方向感のない往復ビンタ相場（$ER < 0.20$ かつ $\alpha \ge 0.50$）を中立・不感帯（$0.50 \sim 0.55$ グレー線）へ減衰させ、ダマシ損失を防止。
-  - `InpUseDriftFilter`（有効/無効切り替え）および `InpDriftThreshold`（閾値設定）パラメータにより完全カスタマイズ可能。
 - **高速化アルゴリズム・1パス解析的SSR (v1.4.0)**:
-  - **1パス解析的残差平方和（SSR）**: 中間配列へのデータコピーと線形回帰関数呼び出し・残差積算の多重パスを完全排除し、単一走査ループで残差平方和を解析的に導出（局所回帰処理を約67%削減）。
-  - **スケール定数・対数回帰定数の事前構造体キャッシュ**: 全16スケールの定数および $\ln(s)$ 回帰の分母等を `OnInit` で事前計算し、毎バー反復評価されていた超越関数（`MathExp`, `MathLog`）呼び出し（10万バーで約160万回）を100%排除。
-  - **初回計算バー数のクリッピング制御 (`InpMaxBarsToCalc = 1500`)**: 初回起動時の計算範囲を実用範囲に厳格制限し、UIフリーズ（約30秒）をミリ秒単位（約1,000倍高速化）へ解消。
-  - **学術推奨最小ボックスサイズ ($s_{\min} \ge 10$)**: 有限長標本効果による上方バイアス（Bryce & Sprague, 2012）を防止するため最小ボックスサイズを 10 に設定。
-- **静的バッファによるメモリ最適化 (v1.3.0)**:
-  - 毎バーの動的配列生成（`ArrayResize`）を完全に排除し、グローバル領域に事前割り当てした静的ワーク配列を再利用。
+  - 局所回帰処理を約67%削減し、超越関数評価を100%事前キャッシュ化。初回計算バー数制限により起動遅延をミリ秒単位へ解消。
 - **マルチタイムフレーム (MTF) ネイティブ対応**:
-  - `InpTimeframe` パラメータにより、インジケータ単体またはEA経由で上位足（例: M5チャート上でM15やH1）のDFA値を直接算出し、現在足チャート上にステップ状の波形として美しく同時描画。
-- **双方向ボックス分割（Bidirectional DFA）**:
-  - 原著論文（Kantelhardt et al.）に準拠し、順方向（$N_s$ 個）＋ 逆方向（$N_s$ 個）の計 $2N_s$ ブロックで分割。端数データの切り捨てをなくし、サンプル数が少ない金融データでも極めて高精度なスケーリング解析を実現。
-- **マルチスケール回帰**:
-  - 最小ボックスサイズ $s_{\min} = 10$ から 最大 $s_{\max} = N/4$ まで、対数等間隔で 16 スケールを抽出。
-- **Super Smoother 平滑化フィルター**:
-  - ジョン・エラーズの 2 次低遅延フィルター（`InpSmoothPeriod = 5`）を搭載し、高周波ジッターを除去。
-- **マルチカラーライン描画 (`DRAW_COLOR_LINE`)**:
-  - 🔴 **赤色 (Crimson)**: レンジレジーム ($\alpha < \text{InpDfaThresholdLow}$)
-  - ⚪ **グレー (Gray)**: 中立・遷移レジーム ($\text{Low} \le \alpha \le \text{High}$)
-  - 🔵 **青色 (DodgerBlue)**: トレンドレジーム ($\alpha > \text{InpDfaThresholdHigh}$)
-- **動的スケール固定**:
-  - レベルライン（Low / 0.50 / High）と連動し、波形がサブウィンドウいっぱいに美しく表示されるよう固定マージンで自動スケーリング。
+  - `InpTimeframe` パラメータにより上位足のDFA値を現在足チャート上に美しく同時描画。
 
 ---
 
-### 3.2 Smoothed RSI インディケータ (`SmoothedRSI.mq5`)
+### 3.3 Smoothed RSI インディケータ (`SmoothedRSI.mq5`)
 
 高周波ノイズを排除した低遅延オシレーターです。
 
@@ -93,57 +97,46 @@ graph TD
 
 ---
 
-### 3.3 Multi Dual MA インディケータ (`MultiDualMA.mq5`)
+### 3.4 Multi Dual MA インディケータ (`MultiDualMA.mq5`)
 
-SMA / EMA / SMMA / LWMA / ALMA の5種類の移動平均アルゴリズムを統合し、信号処理工学（DSP）とATR連動シュミットトリガーを備えた高機能トレンドフォローフィルターです。すべてのMAタイプにおいて、Fast（短期: `clrOrangeRed` / オレンジ赤）とSlow（長期: `clrDeepSkyBlue` / 水色）の2色で統一描画されます。ALMA 選択時はガウス分布重心パラメータ（Offset: Fast 0.92, Slow 0.90）の最適化により、極めて低遅延・高平滑な追従を実現します。
+SMA / EMA / SMMA / LWMA / ALMA の5種類の移動平均アルゴリズムを統合し、信号処理工学（DSP）とATR連動シュミットトリガーを備えた高機能トレンドフォローフィルターです。すべてのMAタイプにおいて、Fast（短期: `clrOrangeRed` / オレンジ赤）とSlow（長期: `clrDeepSkyBlue` / 水色）の2色で統一描画されます。
 
 ```mermaid
 flowchart LR
     A["原価格 P_t"] --> B["Multi Dual MA<br/>(SMA / EMA / SMMA / LWMA / ALMA)"]
     B --> C["Schmitt Trigger<br/>(ATR動的ヒステリシス: Factor 0.08)"]
-    C --> D["SignalState バッファ<br/>(+1.0: Bull / -1.0: Bear)"]
+    D["SignalState バッファ<br/>(+1.0: Bull / -1.0: Bear)"]
+    C --> D
 ```
 
-- **Layer 1: 最適重心シフト（高Offset）による直接的低遅延化**:
-  - ガウス窓の重心シフト $m = (1 - \text{Offset}) \times (N - 1)$ を最新バー寄りに再設計（Fast: `Offset=0.92`, Slow: `Offset=0.90`, `Sigma=5.5`）。
-  - 微分外挿（Zero-Lag）による高周波増幅スパイクを原理的に100%排除しつつ、旧DualALMAより確実に 1〜1.5本早くピーク・ボトムに追従。
-- **Layer 2: SuperSmoother のデフォルト無効化（遅延要因の排除）**:
-  - 2-Pole Butterworth 前処理（Cutoff=8）が内包していた約1.8バーの群遅延を解消するため、デフォルト `InpUseSuperSmoother = false` に設定。ALMA 本来の優れたガウス平滑化能力を最大限に発揮。
-- **Layer 3: 先行モメンタム補正（Zero-Lag Feedforward: オプション）**:
-  - さらなるゼロラグ追従を求める場合のために、入力価格側で微小なモメンタムを加算する安全な先行系列オプション（`InpUseZeroLagLead`）を搭載。後段のガウス積分でノイズが平滑化されるためスパイクゼロ。
-- **Layer 4: ATR連動シュミットトリガー（最適ヒステリシス不感帯）**:
-  - 不感帯幅係数を適正化（$H_t = 0.08 \times \text{ATR}_{14}$）。
-  - もみ合い相場での微小振動によるダマシ往復（チャタリング）を完全にラッチ遮断しつつ、ブレイクアウト初動でのシグナル確定遅延を極小化。
+- **最適重心シフト（高Offset）による直接的低遅延化**:
+  - Fast: `Offset=0.92`, Slow: `Offset=0.90`, `Sigma=5.5`。スパイクゼロで極めて低遅延・高平滑な追従。
+- **ATR連動シュミットトリガー（最適ヒステリシス不感帯）**:
+  - 不感帯幅係数を適正化（$H_t = 0.08 \times \text{ATR}_{14}$）し、もみ合い相場での微小振動によるダマシ往復（チャタリング）を完全遮断。
 
 ---
 
-### 3.4 ハイブリッド取引 EA (`Hybrid_DFA_EA.mq5` & `DFA_Common.mqh`)
+### 3.5 ハイブリッド取引 EA (`Hybrid_DFA_EA.mq5` & `DFA_Common.mqh`)
 
-- **ヒステリシス付きレジーム状態遷移機械 (v1.3.0)**:
-  - シュミットトリガー方式による状態保持を導入。一度確定したレジーム（RANGE / TREND）を覆すには反対側の閾値を超える必要があり、閾値境界付近での微小振動によるチャタリング決済（往復ビンタ）を完全抑制。
-- **堅牢な実弾注文執行レイヤー (v1.3.0)**:
-  - **充填モード自動判定 (`DetectFillType`)**: `SYMBOL_FILLING_MODE` ビットマスクを解析し、ブローカー許容モード（FOK/IOC/RETURN）を安全に自動割り当て。
-  - **ストップレベル/スプレッドガード (`AdjustStopDistance`)**: ブローカーの最小ストップレベルおよび拡大スプレッドを加味し、`INVALID_STOPS` エラーを事前回避。
-  - **動的ロット正規化 (`NormalizeLot`)**: 銘柄ごとの `SYMBOL_VOLUME_STEP` 精度に自動追従して正規化し、`INVALID_VOLUME` エラーを防止。
-  - **有効証拠金基準の資金管理**: 含み損時の過剰レバレッジを防ぐため、許容リスク算出基準を `ACCOUNT_BALANCE` から `ACCOUNT_EQUITY` へ最適化。
-- **厳密な上位足タイムスタンプ同期 (v1.3.0)**:
-  - DFA および ATR のデータ取得において、上位足の確定足オープン時刻（`iTime(_Symbol, htf, 1)`）を個別に厳密指定。上位足の形成中未確定バーの巻き込み（リペイント）を構造的に完全排除。
-- **レジーム駆動型マルチ戦略**:
-  - DFA の相場判定に応じて、Smoothed RSI（レンジ）と Dual ALMA（トレンド）のシグナル受付を動的にスイッチング。
-- **両建て防止 & ドテン決済**:
-  - 同一戦略内での買い・売りの同時保有を禁止。反対シグナル発生時は既存ポジションを即時クローズしてドテンエントリー。
+- **カルマンフィルター上位足レジーム判定 (v2.0.0)**:
+  - 1段階上位足（`HTF_MODE_AUTO_NEXT`）の `KalmanRegimeEstimator` から $Z$ スコアを取得し、**上昇トレンド（$Z \ge 2.0$）**、**下降トレンド（$Z \le -2.0$）**、**レンジ相場（$-2.0 < Z < 2.0$）**の3状態へ厳密分類。
+- **レジーム方向一致型エントリー連動 (v2.0.0)**:
+  - **上昇トレンド時**: トレンド戦略（MultiDualMA）の **BUY のみ** 許可（SELLを遮断）。
+  - **下降トレンド時**: トレンド戦略（MultiDualMA）の **SELL のみ** 許可（BUYを遮断）。
+  - **レンジ相場時**: レンジ戦略（Smoothed RSI）の逆張りエントリーを許可（トレンド追従を停止）。
+- **カルマン中央基準線・レジーム逆行強制決済 (v2.0.0)**:
+  - **レンジポジション**: $Z$ スコアがトレンド領域（$|Z| \ge 2.0$）へ突入した時点で即座に強制決済。
+  - **トレンドBUYポジション**: $Z$ スコアが中央基準線 $0.0$ を下回った（弱気転落）時点で強制決済。
+  - **トレンドSELLポジション**: $Z$ スコアが中央基準線 $0.0$ を上回った（強気転落）時点で強制決済。
 - **レンジ戦略の独立エグジットロジック (Smoothed RSI 利確・損切り)**:
-  - エントリー許可判定（`allowRange`）とエグジット監視を完全分離。DFAが不感帯（$0.45 \le \alpha \le 0.55$）にあっても常に決済判定が稼働。
   - **利確（平均回帰）**: RSI が中央値 $50.0$ に到達・回帰（BUY: $\ge 50.0$ / SELL: $\le 50.0$）した時点で即時手仕舞い。
-  - **損切り（ゾーン逆行）**: 反転失敗による過熱圏への逆戻り（BUY: 売られすぎ水準 $< 35.0$ / SELL: 買われすぎ水準 $> 65.0$）で即時損切り。
-- **レジーム逆行・0.50 基準線跨ぎ決済 (`ShouldCloseRegimePosition`)**:
-  - エントリーは確実なレジーム（$\alpha < 0.45$ または $\alpha > 0.55$）でのみ行い、ポジション保有中はノイズによる早期クローズを防ぐため $0.50$ を跨ぐまで粘り強くホールド。
-  - レンジ保有中に $\alpha > 0.50$（トレンド側へ傾斜）、またはトレンド保有中に $\alpha < 0.50$（レンジ側へ傾斜）となった時点で即時強制決済。
-  - チャート足確定バー（Bar 1）基準でDFAバッファを同期取得し、タイムラグなく安全に手仕舞い。
-- **動的 ATR エグジット & トレーリングストップ (v1.5.0)**:
-  - 利確（Take Profit）: $\text{ATR}(14) \times 3.0$ （※`InpAtrTpFactor = 0` 指定時はTPを無効化し、SL側ATR倍率を用いたトレーリングストップへ自動切替）
-  - 損切（Stop Loss）: $\text{ATR}(14) \times 1.5$
-  - **M1 ATRトレーリングストップ**: `InpAtrTpFactor = 0` の場合、PC負荷抑制とバックテスト再現性確保のため1分足（M1）確定毎に判定し、価格の有利な進行に合わせて $\text{ATR} \times \text{SlFactor}$ 幅でSLをリアルタイム追従（切り上げ/切り下げ）。
+  - **損切り（ゾーン逆行）**: 反転失敗による過熱圏への逆戻り（BUY: $< 35.0$ / SELL: $> 65.0$）で即時損切り。
+- **堅牢な実弾注文執行レイヤー**:
+  - 充填モード自動判定（`DetectFillType`）、ストップレベル/スプレッドガード（`AdjustStopDistance`）、動的ロット正規化（`NormalizeLot`）、有効証拠金基準（`ACCOUNT_EQUITY`）の資金管理を完備。
+- **動的 ATR エグジット & トレーリングストップ**:
+  - 利確（Take Profit）: $\text{ATR}(20) \times 3.0$ （※`InpAtrTpFactor = 0` 指定時はTPを無効化し、SL側ATR倍率を用いたトレーリングストップへ自動切替）
+  - 損切（Stop Loss）: $\text{ATR}(20) \times 1.5$
+  - **M1 ATRトレーリングストップ**: 1分足（PERIOD_M1）新バー確定毎に有利方向へリアルタイム追従更新。
 
 ---
 
@@ -155,12 +148,15 @@ flowchart LR
 | :--- | :--- | :--- |
 | **`InpRiskPercent`** | `1.0` | 1トレードあたりの許容リスク (%) (有効証拠金基準) |
 | **`InpFixedLot`** | `0.1` | 固定ロット数 (RiskPercent=0時に適用) |
-| **`InpUseDfa`** | `true` | DFAレジーム判定フィルターの有効化 |
-| **`InpDfaTimeframeMode`** | `HTF_MODE_AUTO_NEXT` | DFA 計算時間軸 (デフォルト: 自動1段階上位足) |
-| **`InpDfaWindowSize`** | `300` | DFA 計算対象バー数 ($N$) |
-| **`InpDfaSmoothPeriod`** | `5` | DFA 平滑化期間 (Super Smoother) |
-| **`InpDfaThresholdLow`** | `0.45` | レンジ相場判定閾値 ($\alpha < \text{Low}$) |
-| **`InpDfaThresholdHigh`** | `0.55` | トレンド相場判定閾値 ($\alpha > \text{High}$) |
+| **`InpUseKalman`** | `true` | カルマンレジーム判定フィルターの有効化 |
+| **`InpKalmanTimeframeMode`** | `HTF_MODE_AUTO_NEXT` | カルマン計算時間軸 (デフォルト: 自動1段階上位足) |
+| **`InpKalmanAutoTimeframeScale`** | `true` | 時間足に応じたノイズ自動スケーリング (Δt補正) |
+| **`InpKalmanAutoCalibration`** | `true` | Rice推定量による解析的自動キャリブレーション |
+| **`InpKalmanTargetLagBars`** | `10.0` | ターゲット時定数 (目安バー数: 8〜15推奨) |
+| **`InpKalmanCalibSamples`** | `1000` | 観測ノイズ計測バー数 |
+| **`InpKalmanZThreshold`** | `2.0` | トレンド判定閾値 ($Z \ge 2.0$ 上昇, $Z \le -2.0$ 下降, 間はレンジ) |
+| **`InpKalmanZExit`** | `1.0` | トレンド離脱閾値 (内部ヒステリシス用) |
+| **`InpKalmanAppliedPrice`** | `PRICE_CLOSE` | 適用価格 |
 | **`InpUseRangeStrategy`** | `true` | レンジ戦略 (Smoothed RSI) の有効化 |
 | **`InpSSPeriod`** | `14` | Super Smoother 遮断周期 |
 | **`InpRsiPeriod`** | `7` | RSI 計算期間 |
@@ -193,34 +189,46 @@ flowchart LR
 ## 5. セットアップ & コンパイル手順
 
 1. **ファイルの配置**:
-   - `Experts/Hybrid_DFA_EA.mq5` を MT5 の `MQL5/Experts/` 配下に配置
-   - `Indicators/Hybrid_DFA_EA/` フォルダを MT5 の `MQL5/Indicators/` 配下に配置
-   - `Include/Hybrid_DFA_EA/` フォルダを MT5 の `MQL5/Include/` 配下に配置
+   - `Experts/Hybrid_DFA_EA/Hybrid_DFA_EA.mq5` を MT5 の `MQL5/Experts/Hybrid_DFA_EA/` 配下に配置
+   - `Indicators/Hybrid_DFA_EA/` フォルダを MT5 の `MQL5/Indicators/Hybrid_DFA_EA/` 配下に配置
+   - `Include/Hybrid_DFA_EA/` フォルダを MT5 の `MQL5/Include/Hybrid_DFA_EA/` 配下に配置
 2. **コンパイル**:
    - MetaEditor で以下のファイルを順次開き、**F7** キーでコンパイルします：
-     1. `Indicators/Hybrid_DFA_EA/DFA.mq5`
-     2. `Indicators/Hybrid_DFA_EA/SmoothedRSI.mq5`
-     3. `Indicators/Hybrid_DFA_EA/MultiDualMA.mq5`
-     4. `Experts/Hybrid_DFA_EA.mq5`
+     1. `Indicators/Hybrid_DFA_EA/KalmanRegimeEstimator.mq5`
+     2. `Indicators/Hybrid_DFA_EA/MultiDualMA.mq5`
+     3. `Indicators/Hybrid_DFA_EA/SmoothedRSI.mq5`
+     4. `Indicators/Hybrid_DFA_EA/DFA.mq5`
+     5. `Experts/Hybrid_DFA_EA/Hybrid_DFA_EA.mq5`
 3. **バックテスト実行**:
    - MT5 のストラテジーテスターを開き、`Hybrid_DFA_EA` を選択してバックテストを実行します。
-   - 推奨時間軸: **1時間足 (H1)** (DFA/ATRは自動でH4上位足を適用)
+   - 推奨時間軸: **15分足 (M15) または 1時間足 (H1)** (カルマン/ATRは自動で1段階上位足を適用)
    - 推奨通貨ペア: **USDJPY, EURUSD**
 
 ---
 
 ## 6. 改訂履歴 (Changelog)
 
-### [v1.7.0] - 2026-09-13
-- **トレンドインジケータの MultiDualMA 化とMAタイプ選択・カラー統一 (`MultiDualMA.mq5`, `DFA_Common.mqh`, `Hybrid_DFA_EA.mq5`)**:
-  - **インジケータ名称を `MultiDualMA.mq5` に刷新**:
-    - ALMA 専従から 5 種類の移動平均に対応する汎用トレンドインジケータへ進化させたことに伴い、`DualALMA.mq5` から `MultiDualMA.mq5` へ改名。
-  - **全MAタイプでの2色プロット統一（赤/水色）**:
-    - MT5ネイティブ `iMA` で発生していた「両線とも赤線でテスター/チャートで見分けがつかない」問題を完全解消。
-    - `MultiDualMA.mq5` 側で SMA / EMA / SMMA / LWMA（FIR畳み込み & 再帰差分）および ALMA の全計算ロジックを統合。どのMAタイプを選択しても **Fast線: `clrOrangeRed` (オレンジ赤)**、**Slow線: `clrDeepSkyBlue` (水色)** で美しく統一描画。
-  - **デフォルト戦略を LWMA (Fast=20, Slow=40) & ATR 20 に設定**:
-    - 長期バックテストで最も高い堅牢性とプロフィットファクターを示した LWMA (20/40) をトレンド戦略の標準設定に採用。
-    - 出口戦略側の ATR 期間も `20` をデフォルト値に更新。
+### [v2.0.0] - 2026-09-27
+- **レジーム判定を対数空間平滑カルマンフィルター (`KalmanRegimeEstimator.mq5`) に全面刷新 (`Hybrid_DFA_EA.mq5`, `DFA_Common.mqh`)**:
+  - **カルマンフィルター上位足連携 (`InpKalmanTimeframeMode = HTF_MODE_AUTO_NEXT`)**:
+    - 従来の DFA に代わり、対数価格空間における平滑局所線形トレンドモデル（Smooth Trend Model）と Rice推定量による自律客観キャリブレーションを備えた `KalmanRegimeEstimator.mq5` をレジーム判定エンジンに採用。
+    - DFA と同様にチャート足の1段階上位足を自動解決してMTF同期展開。
+  - **統計的 $Z$ スコアによる3段階レジーム判定**:
+    - $Z \ge 2.0$（`InpKalmanZThreshold`）: **上昇トレンド** (`REGIME_UP_TREND`)
+    - $Z \le -2.0$: **下降トレンド** (`REGIME_DOWN_TREND`)
+    - $-2.0 < Z < 2.0$: **レンジ相場** (`REGIME_RANGE`)
+  - **レジーム方向一致型エントリー連動**:
+    - 上昇トレンド時はトレンド戦略（MultiDualMA）の **BUY のみ** 許可。
+    - 下降トレンド時はトレンド戦略（MultiDualMA）の **SELL のみ** 許可。
+    - レンジ相場時はレンジ戦略（Smoothed RSI）の逆張りエントリーを許可。
+  - **カルマン中央基準線・レジーム逆行強制決済 (`ShouldCloseKalmanPosition`)**:
+    - レンジポジション: $Z$ スコアがトレンド領域（$|Z| \ge 2.0$）へ突入した時点で即座に強制決済。
+    - トレンドBUYポジション: $Z$ スコアが中央基準線 $0.0$ を下回った（弱気・中立転落）時点で強制決済。
+    - トレンドSELLポジション: $Z$ スコアが中央基準線 $0.0$ を上回った（強気・中立転落）時点で強制決済。
+  - **共通モジュール拡張 (`DFA_Common.mqh`)**:
+    - `ENUM_REGIME_TYPE` に `REGIME_UP_TREND` と `REGIME_DOWN_TREND` を追加。
+    - `SSystemState` に `kalman_z`, `kalman_slope` フィールドを追加。
+    - カルマンレジーム判定関数 `DetermineKalmanRegime` および逆行決済判定関数 `ShouldCloseKalmanPosition` を配備。
 
 ### [v1.6.2] - 2026-09-13
 - **Dual ALMA 超低遅延・高平滑化アーキテクチャの確立 (`DualALMA.mq5`, `Hybrid_DFA_EA.mq5`)**:
