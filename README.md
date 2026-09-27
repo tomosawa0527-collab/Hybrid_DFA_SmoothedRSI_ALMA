@@ -32,19 +32,21 @@ graph TD
 ```text
 ├── Experts/
 │   └── Hybrid_DFA_EA/
-│       ├── Hybrid_DFA_EA.mq5     # メイン自動売買EA (カルマンレジーム判定・ポジション管理・発注制御)
-│       └── KalmanRegimeEA.mq5    # カルマンフィルター特化型トレンドフォローEA
+│       ├── KalmanTrendEnsembleEA.mq5 # 【新仕様書完全準拠】カルマンレジーム・マルチホライズンLWMAアンサンブル・二重防護EA
+│       ├── Hybrid_DFA_EA.mq5         # ハイブリッド自動売買EA (カルマンレジーム判定・ポジション管理・発注制御)
+│       └── KalmanRegimeEA.mq5        # カルマンフィルター特化型トレンドフォローEA
 ├── Include/
 │   └── Hybrid_DFA_EA/
-│       └── DFA_Common.mqh        # 共通定義・資金管理・注文執行補助・レジーム状態遷移機械
+│       └── KalmanStrategy_Common.mqh # 共通定義・クラスタリスク管理・資金管理・注文執行補助・レジーム状態遷移機械
 ├── Indicators/
 │   └── Hybrid_DFA_EA/
 │       ├── KalmanRegimeEstimator.mq5 # 平滑トレンドモデル自律キャリブレーション型カルマンレジーム推定
-│       ├── DFA.mq5               # 双方向DFAレジーム判別インディケータ (静的バッファ最適化済み)
-│       ├── SmoothedRSI.mq5       # 2-Pole Super Smoother 平滑化RSI
-│       └── MultiDualMA.mq5       # マルチタイプ対応デュアル移動平均線 (SMA/EMA/SMMA/LWMA/ALMA)
+│       ├── DFA.mq5                   # 双方向DFAレジーム判別インディケータ (静的バッファ最適化済み)
+│       ├── SmoothedRSI.mq5           # 2-Pole Super Smoother 平滑化RSI
+│       └── MultiDualMA.mq5           # マルチタイプ対応デュアル移動平均線 (SMA/EMA/SMMA/LWMA/ALMA)
 └── docs/
-    ├── kalman_regime_estimator.md # カルマンレジーム推定インジケーター技術仕様書
+    ├── FX売買戦略仕様書（実運用完全版・カルマンフィルター統合版）.md # 実運用完全版仕様書
+    ├── kalman_regime_estimator.md     # カルマンレジーム推定インジケーター技術仕様書
     ├── 20260822_2_DFA-Smoother ハイブリッド高堅牢化取引システム 仕様書（改訂版）.md
     └── 20260901_MQL5 EA Implementation Review.md
 ```
@@ -140,9 +142,85 @@ flowchart LR
 
 ---
 
+### 3.6 実運用完全版トレンドフォローEA (`KalmanTrendEnsembleEA.mq5`)
+
+[`docs/FX売買戦略仕様書（実運用完全版・カルマンフィルター統合版）.md`](docs/FX売買戦略仕様書（実運用完全版・カルマンフィルター統合版）.md) に定義されたすべての取引規則、資金管理モデル、リスク防護構造を100%完全実装した最上位トレンドフォローEAです。
+
+```mermaid
+graph TD
+    subgraph SignalLayer ["シグナル生成層 (日足 D1 確定足)"]
+        KRegime["KalmanRegimeEstimator (Buffer 3)<br/>+1.0: 上昇 / -1.0: 下降"]
+        Band["ATR(14) ブレイクアウトバンド<br/>LWMA(60) ± 1.2 * ATR"]
+        Ensemble["3組LWMAアンサンブル<br/>10/30, 20/60, 40/120 (>= 0.67)"]
+        RSI["RSI(14) モメンタム<br/>Buy: 50〜80 / Sell: 20〜50"]
+    end
+
+    subgraph ProtectionLayer ["二重防護ストップ構造"]
+        HardSL["第1防護壁: ブローカー側ハードSL<br/>1. 成行発注時 StopPrice_init 付与<br/>2. 約定直後 0.5*ATR フロア保証即時同期<br/>3. 日次有利方向トレイリング更新"]
+        SoftExit["第2防護壁: 日足確定時ソフト決済<br/>1. 急反転 / バンド割れ / Swing割れ: 成行全決済<br/>2. LWMA(20) 到達: 50%部分利確"]
+    end
+
+    subgraph RiskLayer ["2通貨分解クラスタ & レバレッジ管理"]
+        Cluster["4大通貨クラスタ (USD, 欧州, 資源国, JPY)<br/>1ポジションで2通貨枠を同時消費<br/>各方向最大 1.0% / 総リスク最大 2.0%"]
+        Leverage["実効レバ <= 5.0<br/>維持率 < 300% 新規停止 / < 150% 緊急オフ"]
+        Carry["金曜NYクローズ1時間前 週末持ち越し防護"]
+    end
+
+    SignalLayer --> ProtectionLayer
+    ProtectionLayer --> RiskLayer
+```
+
+- **対数正規化カルマンレジーム (`KalmanRegimeEstimator.mq5` 連携)**:
+  - 対数パーセント価格系列 $y_t = 100 \times \ln(P_t)$ を観測とし、通貨ペア固有の価格水準スケール（USDJPYの150 vs EURUSDの1.05）を完全排除した低遅延レジーム判定（`+1.0` / `-1.0`）。
+- **3組マルチホライズン・アンサンブル比率（Ensemble Ratio）**:
+  - 短期（10/30）、中期（20/60）、長期（40/120）の3組のLWMAクロス状態から合致度（0.0〜1.0）を算出し、$0.67$ 以上でエントリー承認。ロット数に連続反映。
+- **二重防護ストップ構造（Dual-Layer Stop Architecture）**:
+  - **第1防護壁（ブローカー側ハードストップ）**:
+    - **ステップ1（成行発注時）**: 確定足ベースの $\text{StopPrice}_{\text{init}}$（$\text{LWMA}(60) \pm 1.0 \times \text{ATR}$ と過去20本スイングハイ・ローの安全側）をSLに付与して発注。
+    - **ステップ2（約定後即時更新）**: 実約定価格 $\text{OpenPrice}$ から $0.5 \times \text{ATR}$ の最低フロア距離を担保し、即座に `PositionModify` でハードSLを同期確定。
+    - **日次有利トレイリング**: 日足確定毎に計算し、有利方向のみ切り上げ／切り下げ。
+  - **第2防護壁（日足終値確定時ソフト決済）**:
+    - 全決済: カルマン急反転（`-1.0` / `+1.0`）、ATRバンド割れ、Swing High/Lowブレイクで全ロット成行決済（決済後2本クールダウン付与）。
+    - 部分利確: $\text{LWMA}(20)$ クロスで保有ロットの50%を成行決済（全決済と競合時は全決済最優先）。
+- **2通貨分解型クラスタリスク管理（仕様書第8章）**:
+  - 通貨ペアではなく「通貨そのもの」を4大クラスタ（USD、欧州、資源国、JPY）に分解し、1ポジションで構成2通貨の枠を同時に $0.5\%$ 消費。同方向リスク上限 $1.0\%$、ポートフォリオ総リスク上限 $2.0\%$ を厳格管理。
+- **レバレッジ・証拠金・週末持ち越し防護**:
+  - 実効レバレッジ $\le 5.0$、証拠金維持率 $< 300\%$ で新規発注停止、$< 150\%$ で含み損の大きい順に50%強制決済（緊急リスクオフ）。
+  - 金曜NYクローズ1時間前（土曜05:00/06:00日本時間）、含み損かつSLまで $0.5 \times \text{ATR}$ 未満のポジションを市場クローズ前に全決済。
+
+---
+
 ## 4. パラメータ一覧
 
-### EA パラメータ (`Hybrid_DFA_EA.mq5`)
+### 実運用完全版 EA パラメータ (`KalmanTrendEnsembleEA.mq5`)
+
+| パラメータ名 | デフォルト値 | 説明 |
+| :--- | :--- | :--- |
+| **`InpMagicNumber`** | `20260927` | EA マジックナンバー |
+| **`InpRiskPercent`** | `0.5` | 1トレード許容リスク (%) (口座総資産比 0.5%) |
+| **`InpMaxSpreadPips`** | `2.5` | 許容最大スプレッド (Pips: 早朝スプレッド待機用) |
+| **`InpKalmanTF`** | `PERIOD_D1` | カルマン計算時間足 (仕様書標準: 日足 D1) |
+| **`InpIndTargetLagBars`** | `10.0` | カルマンターゲット時定数 (抽出スイング幅: 8〜15本推奨) |
+| **`InpIndZEnter`** | `2.0` | カルマントレンド突入閾値 ($|Z| \ge 2.0$) |
+| **`InpIndZExit`** | `1.0` | カルマントレンド離脱閾値 ($|Z| \le 1.0$) |
+| **`InpLwmaShortFast` / `Slow`** | `10` / `30` | 短期 LWMA ペア期間 |
+| **`InpLwmaMidFast` / `Slow`** | `20` / `60` | 中期 LWMA ペア期間 (部分利確基準 / ブレイク・ストップ基準) |
+| **`InpLwmaLongFast` / `Slow`** | `40` / `120` | 長期 LWMA ペア期間 |
+| **`InpEnsembleThreshold`** | `0.67` | アンサンブル合致度閾値 (3組中2組以上 = 0.67) |
+| **`InpAtrBandMultiplier`** | `1.2` | エントリーバンド倍率 ($\text{LWMA}(60) \pm 1.2 \times \text{ATR}$) |
+| **`InpAtrStopMultiplier`** | `1.0` | ストップ基準線倍率 ($\text{LWMA}(60) \pm 1.0 \times \text{ATR}$) |
+| **`InpAtrFloorMultiplier`** | `0.5` | 実約定価格最低フロア距離倍率 ($0.5 \times \text{ATR}$) |
+| **`InpRsiLongMin` / `Max`** | `50.0` / `80.0` | 買いモメンタム許容範囲 ($50 < \text{RSI} \le 80$) |
+| **`InpRsiShortMin` / `Max`**| `20.0` / `50.0` | 売りモメンタム許容範囲 ($20 \le \text{RSI} < 50$) |
+| **`InpSwingPeriod`** | `20` | スイングハイ・ロー参照期間 (過去20本・当日除外) |
+| **`InpCooldownBars`** | `2` | 決済後クールダウン期間 (バー数: 48時間=2本) |
+| **`InpMaxEffectiveLeverage`** | `5.0` | 実効レバレッジ上限 (5.0倍) |
+| **`InpMarginLevelStopNew`** | `300.0` | 新規発注停止 証拠金維持率 (%) |
+| **`InpMarginLevelEmergency`** | `150.0` | 緊急リスクオフ 証拠金維持率 (%) |
+| **`InpEnableClusterRisk`** | `true` | 2通貨分解クラスタ管理有効化 (各方向1.0% / 総リスク2.0%) |
+| **`InpEnableWeekendCarry`** | `true` | 週末持ち越しリスク管理有効化 (金曜NYクローズ前決済) |
+
+### ハイブリッド EA パラメータ (`Hybrid_DFA_EA.mq5`)
 
 | パラメータ名 | デフォルト値 | 説明 |
 | :--- | :--- | :--- |
@@ -189,7 +267,7 @@ flowchart LR
 ## 5. セットアップ & コンパイル手順
 
 1. **ファイルの配置**:
-   - `Experts/Hybrid_DFA_EA/Hybrid_DFA_EA.mq5` を MT5 の `MQL5/Experts/Hybrid_DFA_EA/` 配下に配置
+   - `Experts/Hybrid_DFA_EA/` フォルダを MT5 の `MQL5/Experts/Hybrid_DFA_EA/` 配下に配置
    - `Indicators/Hybrid_DFA_EA/` フォルダを MT5 の `MQL5/Indicators/Hybrid_DFA_EA/` 配下に配置
    - `Include/Hybrid_DFA_EA/` フォルダを MT5 の `MQL5/Include/Hybrid_DFA_EA/` 配下に配置
 2. **コンパイル**:
@@ -198,15 +276,32 @@ flowchart LR
      2. `Indicators/Hybrid_DFA_EA/MultiDualMA.mq5`
      3. `Indicators/Hybrid_DFA_EA/SmoothedRSI.mq5`
      4. `Indicators/Hybrid_DFA_EA/DFA.mq5`
-     5. `Experts/Hybrid_DFA_EA/Hybrid_DFA_EA.mq5`
+     5. `Experts/Hybrid_DFA_EA/KalmanTrendEnsembleEA.mq5` （実運用完全版EA）
+     6. `Experts/Hybrid_DFA_EA/Hybrid_DFA_EA.mq5`
 3. **バックテスト実行**:
-   - MT5 のストラテジーテスターを開き、`Hybrid_DFA_EA` を選択してバックテストを実行します。
-   - 推奨時間軸: **15分足 (M15) または 1時間足 (H1)** (カルマン/ATRは自動で1段階上位足を適用)
-   - 推奨通貨ペア: **USDJPY, EURUSD**
+   - MT5 のストラテジーテスターを開き、`KalmanTrendEnsembleEA` または `Hybrid_DFA_EA` を選択してバックテストを実行します。
+   - `KalmanTrendEnsembleEA` 推奨設定:
+     - 時間軸: **日足 (Daily / D1)**
+     - 検証期間: **15年以上** (仕様書第13章準拠: 2011年〜2026年)
+     - 対象通貨ペア: **USDJPY, EURUSD, GBPUSD, AUDUSD, EURJPY, GBPJPY, AUDJPY, USDCAD** 等
 
 ---
 
 ## 6. 改訂履歴 (Changelog)
+
+### [v2.1.0] - 2026-09-27
+- **実運用完全版仕様書完全準拠EAの実装 (`KalmanTrendEnsembleEA.mq5`)**:
+  - `docs/FX売買戦略仕様書（実運用完全版・カルマンフィルター統合版）.md` に基づく新規EAを新規作成。
+  - **対数正規化カルマンレジーム (`KalmanRegimeEstimator.mq5`)**: Buffer 3 (Regime `+1.0` / `-1.0` / `0.0`), Buffer 0 (Z-Score), Buffer 2 (Slope) を `iCustom` で取得。
+  - **3組LWMAアンサンブル**: 短期(10/30), 中期(20/60), 長期(40/120) の合致度 $\ge 0.67$ で確信度スコアリング。
+  - **二重防護ストップ構造（Dual-Layer Stop Architecture）**:
+    - 第1防護壁（ブローカー側ハードSL）: 成行発注時 $\text{StopPrice}_{\text{init}}$ 付与 $\to$ 約定直後 $0.5 \times \text{ATR}$ 最低フロア保証即時同期 $\to$ 日次有利方向トレイリング更新。
+    - 第2防護壁（日足確定時ソフト決済）: 急反転・ATRバンド割れ・スイング割れ成行全決済（クールダウン2本付与） ＆ $\text{LWMA}(20)$ 到達時50%部分利確。
+  - **2通貨分解型クラスタリスク管理**: 4大通貨クラスタ（USD, 欧州, 資源国, JPY）の同方向 $1.0\%$ 上限、総オープンリスク $2.0\%$ 上限。
+  - **実効レバレッジ・証拠金維持率・週末持ち越し防護**: 実効レバ $\le 5.0$、維持率 $< 300\%$ 新規停止、$< 150\%$ 緊急リスクオフ、金曜NYクローズ前週末決済。
+- **共通モジュールリネーム・大幅拡張 (`KalmanStrategy_Common.mqh`)**:
+  - `DFA_Common.mqh` を `KalmanStrategy_Common.mqh` にリネームし、2通貨分解クラスタ管理、スイングハイ・ロー計算、厳格ロット計算、レバレッジ・維持率監視、週末リスク管理関数を完全実装。
+  - 既存の `Hybrid_DFA_EA.mq5` のインクルードパスを同期更新。
 
 ### [v2.0.0] - 2026-09-27
 - **レジーム判定を対数空間平滑カルマンフィルター (`KalmanRegimeEstimator.mq5`) に全面刷新 (`Hybrid_DFA_EA.mq5`, `DFA_Common.mqh`)**:

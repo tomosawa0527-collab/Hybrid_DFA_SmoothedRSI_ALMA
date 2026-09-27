@@ -8,35 +8,6 @@
             "-D__MQL__",
             "-D__MQL5__",
             "-includec:/Users/tomos/.antigravity-ide/extensions/ngsoftware.mql-clangd-1.1.63-universal/files/mql_clangd_compat.h",
-            "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/DFA.3ceae963.auto.mqh",
-            "-fms-extensions",
-            "-fms-compatibility",
-            "-ferror-limit=0",
-            "-Wno-invalid-token-paste",
-            "-Wno-unused-value",
-            "-Wno-unknown-pragmas",
-            "-Wno-writable-strings",
-            "-Xclang",
-            "-Wno-invalid-pp-directive",
-            "-Wno-unknown-directives",
-            "-Wno-language-extension-token",
-            "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",
-            "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include",
-            "-D__MQL5_BUILD__",
-            "-c",
-            "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Indicators/Hybrid_DFA_EA/DFA.mq5"
-        ],
-        "file": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Indicators/Hybrid_DFA_EA/DFA.mq5"
-    },
-    {
-        "directory": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",
-        "arguments": [
-            "clang++",
-            "-xc++",
-            "-std=c++17",
-            "-D__MQL__",
-            "-D__MQL5__",
-            "-includec:/Users/tomos/.antigravity-ide/extensions/ngsoftware.mql-clangd-1.1.63-universal/files/mql_clangd_compat.h",
             "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/SmoothedRSI.ad77bb9f.auto.mqh",
             "-fms-extensions",
             "-fms-compatibility",
@@ -66,7 +37,7 @@
             "-D__MQL__",
             "-D__MQL5__",
             "-includec:/Users/tomos/.antigravity-ide/extensions/ngsoftware.mql-clangd-1.1.63-universal/files/mql_clangd_compat.h",
-            "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/DualALMA.9489fcdd.auto.mqh",
+            "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/MultiDualMA.00c467b1.auto.mqh",
             "-fms-extensions",
             "-fms-compatibility",
             "-ferror-limit=0",
@@ -82,9 +53,9 @@
             "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include",
             "-D__MQL5_BUILD__",
             "-c",
-            "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Indicators/Hybrid_DFA_EA/DualALMA.mq5"
+            "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Indicators/Hybrid_DFA_EA/MultiDualMA.mq5"
         ],
-        "file": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Indicators/Hybrid_DFA_EA/DualALMA.mq5"
+        "file": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Indicators/Hybrid_DFA_EA/MultiDualMA.mq5"
     },
     {
         "directory": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",
@@ -95,7 +66,7 @@
             "-D__MQL__",
             "-D__MQL5__",
             "-includec:/Users/tomos/.antigravity-ide/extensions/ngsoftware.mql-clangd-1.1.63-universal/files/mql_clangd_compat.h",
-            "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/Hybrid_DFA_EA.6713d54c.auto.mqh",
+            "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/KalmanRegimeEstimator.b831d940.auto.mqh",
             "-fms-extensions",
             "-fms-compatibility",
             "-ferror-limit=0",
@@ -111,9 +82,96 @@
             "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include",
             "-D__MQL5_BUILD__",
             "-c",
-            "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Experts/Hybrid_DFA_EA.mq5"
+            "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Indicators/Hybrid_DFA_EA/KalmanRegimeEstimator.mq5"
         ],
-        "file": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Experts/Hybrid_DFA_EA.mq5"
+        "file": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Indicators/Hybrid_DFA_EA/KalmanRegimeEstimator.mq5"
+    },
+    {
+        "directory": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",
+        "arguments": [
+            "clang++",
+            "-xc++",
+            "-std=c++17",
+            "-D__MQL__",
+            "-D__MQL5__",
+            "-includec:/Users/tomos/.antigravity-ide/extensions/ngsoftware.mql-clangd-1.1.63-universal/files/mql_clangd_compat.h",
+            "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/DFA.3ceae963.auto.mqh",
+            "-fms-extensions",
+            "-fms-compatibility",
+            "-ferror-limit=0",
+            "-Wno-invalid-token-paste",
+            "-Wno-unused-value",
+            "-Wno-unknown-pragmas",
+            "-Wno-writable-strings",
+            "-Xclang",
+            "-Wno-invalid-pp-directive",
+            "-Wno-unknown-directives",
+            "-Wno-language-extension-token",
+            "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",
+            "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include",
+            "-D__MQL5_BUILD__",
+            "-c",
+            "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Indicators/Hybrid_DFA_EA/DFA.mq5"
+        ],
+        "file": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Indicators/Hybrid_DFA_EA/DFA.mq5"
+    },
+    {
+        "directory": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",
+        "arguments": [
+            "clang++",
+            "-xc++",
+            "-std=c++17",
+            "-D__MQL__",
+            "-D__MQL5__",
+            "-includec:/Users/tomos/.antigravity-ide/extensions/ngsoftware.mql-clangd-1.1.63-universal/files/mql_clangd_compat.h",
+            "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/KalmanRegimeEA.f118c9df.auto.mqh",
+            "-fms-extensions",
+            "-fms-compatibility",
+            "-ferror-limit=0",
+            "-Wno-invalid-token-paste",
+            "-Wno-unused-value",
+            "-Wno-unknown-pragmas",
+            "-Wno-writable-strings",
+            "-Xclang",
+            "-Wno-invalid-pp-directive",
+            "-Wno-unknown-directives",
+            "-Wno-language-extension-token",
+            "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",
+            "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include",
+            "-D__MQL5_BUILD__",
+            "-c",
+            "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Experts/Hybrid_DFA_EA/KalmanRegimeEA.mq5"
+        ],
+        "file": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Experts/Hybrid_DFA_EA/KalmanRegimeEA.mq5"
+    },
+    {
+        "directory": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",
+        "arguments": [
+            "clang++",
+            "-xc++",
+            "-std=c++17",
+            "-D__MQL__",
+            "-D__MQL5__",
+            "-includec:/Users/tomos/.antigravity-ide/extensions/ngsoftware.mql-clangd-1.1.63-universal/files/mql_clangd_compat.h",
+            "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/Hybrid_DFA_EA.47928da8.auto.mqh",
+            "-fms-extensions",
+            "-fms-compatibility",
+            "-ferror-limit=0",
+            "-Wno-invalid-token-paste",
+            "-Wno-unused-value",
+            "-Wno-unknown-pragmas",
+            "-Wno-writable-strings",
+            "-Xclang",
+            "-Wno-invalid-pp-directive",
+            "-Wno-unknown-directives",
+            "-Wno-language-extension-token",
+            "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",
+            "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include",
+            "-D__MQL5_BUILD__",
+            "-c",
+            "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Experts/Hybrid_DFA_EA/Hybrid_DFA_EA.mq5"
+        ],
+        "file": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Experts/Hybrid_DFA_EA/Hybrid_DFA_EA.mq5"
     },
     {
         "directory": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",
@@ -124,7 +182,7 @@
             "-D__MQL__",
             "-D__MQL5__",
             "-includec:/Users/tomos/.antigravity-ide/extensions/ngsoftware.mql-clangd-1.1.63-universal/files/mql_clangd_compat.h",
-            "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/Hybrid_DFA_EA.6713d54c.auto.mqh",
+            "-includef:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/.mql-auto-forwards/Hybrid_DFA_EA.47928da8.auto.mqh",
             "-fms-extensions",
             "-fms-compatibility",
             "-ferror-limit=0",
@@ -140,8 +198,8 @@
             "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include",
             "-D__MQL5_BUILD__",
             "-c",
-            "F:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include/Hybrid_DFA_EA/DFA_Common.mqh"
+            "F:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include/Hybrid_DFA_EA/KalmanStrategy_Common.mqh"
         ],
-        "file": "F:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include/Hybrid_DFA_EA/DFA_Common.mqh"
+        "file": "F:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include/Hybrid_DFA_EA/KalmanStrategy_Common.mqh"
     }
 ]
