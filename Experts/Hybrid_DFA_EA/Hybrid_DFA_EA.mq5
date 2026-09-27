@@ -5,7 +5,13 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Hybrid DFA System"
 #property link "https://www.mql5.com"
-#property version "1.60"
+#property version "2.00"
+
+//--- ストラテジーテスター用インジケーター依存関係の明示
+#property tester_indicator "Hybrid_DFA_EA\\KalmanRegimeEstimator.ex5"
+#property tester_indicator "Hybrid_DFA_EA/KalmanRegimeEstimator.ex5"
+#property tester_indicator "KalmanRegimeEstimator.ex5"
+#property tester_indicator "Indicators\\Hybrid_DFA_EA\\KalmanRegimeEstimator.ex5"
 
 #include "..\..\Include\Hybrid_DFA_EA\DFA_Common.mqh"
 #include <Trade\PositionInfo.mqh>
@@ -20,14 +26,17 @@ input double InpFixedLot = 0.1;                                             // �
 input ulong InpMagicNumber = 20260823;                                      // マジックナンバー
 input ulong InpSlippage = 10;                                               // 許容スリッページ (points)
 
-//--- DFA レジーム判定設定
-input group "=== DFA (レジーム判定) 設定 ==="
-input bool InpUseDfa = true;                                                // DFA レジーム判定を有効化
-input ENUM_HTF_MODE InpDfaTimeframeMode = HTF_MODE_AUTO_NEXT;               // DFA 計算時間軸 (デフォルト: 1段階上位足)
-input int InpDfaWindowSize = 300;                                           // DFAの計算対象バー数
-input int InpDfaSmoothPeriod = 5;                                           // DFA平滑化期間 (1で平滑化なし)
-input double InpDfaThresholdLow = 0.45;                                     // レンジ判定閾値 (これ未満でレンジ)
-input double InpDfaThresholdHigh = 0.55;                                    // トレンド判定閾値 (これ超過でトレンド)
+//--- カルマンフィルター レジーム判定設定
+input group "=== カルマンフィルター (レジーム判定) 設定 ==="
+input bool InpUseKalman = true;                                                // カルマンレジーム判定を有効化
+input ENUM_HTF_MODE InpKalmanTimeframeMode = HTF_MODE_AUTO_NEXT;               // カルマン計算時間軸 (デフォルト: 1段階上位足)
+input bool InpKalmanAutoTimeframeScale = true;                                 // 時間足に応じたノイズ自動スケーリング
+input bool InpKalmanAutoCalibration = true;                                    // Rice推定量による解析的自動キャリブレーション
+input double InpKalmanTargetLagBars = 10.0;                                    // ターゲット時定数 (目安バー数: 8〜15推奨)
+input int InpKalmanCalibSamples = 1000;                                        // 観測ノイズ計測バー数
+input double InpKalmanZThreshold = 2.0;                                        // トレンド判定閾値 (>=2.0で上昇, <=-2.0で下降, 間はレンジ)
+input double InpKalmanZExit = 1.0;                                             // トレンド離脱閾値 (インジケータ内部ヒステリシス用)
+input ENUM_APPLIED_PRICE InpKalmanAppliedPrice = PRICE_CLOSE;                  // 適用価格
 
 //--- レンジ戦略 (Super Smoother + RSI) 設定
 input group "=== レンジ戦略 (Super Smoother + RSI) ==="
@@ -73,12 +82,12 @@ input double InpAtrTpFactor = 3.0;                                          // �
 CTrade m_trade;
 CPositionInfo m_position;
 
-int h_dfa = INVALID_HANDLE;
+int h_kalman = INVALID_HANDLE;
 int h_smoothedRsi = INVALID_HANDLE;
 int h_multiDualMa = INVALID_HANDLE;
 int h_atr = INVALID_HANDLE;
 
-ENUM_TIMEFRAMES m_dfaTf = PERIOD_CURRENT;
+ENUM_TIMEFRAMES m_kalmanTf = PERIOD_CURRENT;
 ENUM_TIMEFRAMES m_atrTf = PERIOD_CURRENT;
 
 datetime m_lastBarTime = 0;
@@ -93,6 +102,37 @@ ENUM_REGIME_TYPE g_currentRegime = REGIME_NONE;
 #define MAGIC_TREND_OFFSET 2
 
 //+------------------------------------------------------------------+
+//| カルマンインジケーターハンドル生成ヘルパー関数                   |
+//+------------------------------------------------------------------+
+int CreateKalmanIndicatorHandle(const string indicator_path, const ENUM_TIMEFRAMES tf) {
+    return iCustom(_Symbol, _Period, indicator_path,
+                   // --- Group 1: マルチタイムフレーム (MTF) 設定 ---
+                   "=== マルチタイムフレーム (MTF) 設定 ===",
+                   tf,
+                   InpKalmanAutoTimeframeScale,
+
+                   // --- Group 2: 解析的自律キャリブレーション ---
+                   "=== 解析的自律キャリブレーション (Closed-Form Analytical) ===",
+                   InpKalmanAutoCalibration,
+                   InpKalmanTargetLagBars,
+                   InpKalmanCalibSamples,
+
+                   // --- Group 3: カルマンフィルター パラメータ ---
+                   "=== カルマンフィルター パラメータ (手動設定時またはフォールバック) ===",
+                   0.0,    // InpManualQMu
+                   1e-8,   // InpManualQBeta
+                   1e-4,   // InpManualR
+                   1.0,    // InpManualInitialP
+
+                   // --- Group 4: レジーム判定 (ヒステリシス) パラメータ ---
+                   "=== レジーム判定 (ヒステリシス) パラメータ ===",
+                   InpKalmanZThreshold,
+                   InpKalmanZExit,
+                   true,   // InpAllowDirectReversal
+                   InpKalmanAppliedPrice);
+}
+
+//+------------------------------------------------------------------+
 //| 初期化関数                                                       |
 //+------------------------------------------------------------------+
 int OnInit() {
@@ -101,24 +141,31 @@ int OnInit() {
     // Phase 2: ブローカー許容充填モードの自動判定に置換
     m_trade.SetTypeFilling(DetectFillType(_Symbol));
 
-    // 計算時間軸の解決 (DFA / ATR)
-    m_dfaTf = ResolveTimeframe(InpDfaTimeframeMode, _Period);
+    // 計算時間軸の解決 (Kalman / ATR)
+    m_kalmanTf = ResolveTimeframe(InpKalmanTimeframeMode, _Period);
     m_atrTf = ResolveTimeframe(InpAtrTimeframeMode, _Period);
 
-    PrintFormat("[Hybrid_DFA_EA] チャート時間軸: %s | DFA計算時間軸: %s | ATR計算時間軸: %s",
-                EnumToString(_Period), EnumToString(m_dfaTf), EnumToString(m_atrTf));
+    PrintFormat("[Hybrid_DFA_EA] チャート時間軸: %s | カルマン計算時間軸: %s | ATR計算時間軸: %s",
+                EnumToString(_Period), EnumToString(m_kalmanTf), EnumToString(m_atrTf));
 
-    // 1. DFA インディケータハンドル取得 (チャート足上で上位足算出: サブウィンドウ1)
-    if (InpUseDfa) {
-        h_dfa = iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\DFA", m_dfaTf, InpDfaWindowSize, 10, 0,
-                        0, InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, 0.25);
-        if (h_dfa == INVALID_HANDLE) {
-            // パスプレフィックス付きでフォールバック
-            h_dfa = iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\DFA", m_dfaTf, InpDfaWindowSize, 10, 0,
-                            0, InpDfaSmoothPeriod, InpDfaThresholdLow, InpDfaThresholdHigh, 0.25);
+    // 1. カルマンレジーム推定インジケータハンドル取得 (チャート足上で上位足算出)
+    if (InpUseKalman) {
+        string candidates[4];
+        candidates[0] = "Hybrid_DFA_EA\\KalmanRegimeEstimator";
+        candidates[1] = "Indicators\\Hybrid_DFA_EA\\KalmanRegimeEstimator";
+        candidates[2] = "Hybrid_DFA_EA/KalmanRegimeEstimator";
+        candidates[3] = "KalmanRegimeEstimator";
+
+        for (int i = 0; i < 4; i++) {
+            h_kalman = CreateKalmanIndicatorHandle(candidates[i], m_kalmanTf);
+            if (h_kalman != INVALID_HANDLE) {
+                PrintFormat("[Hybrid_DFA_EA] KalmanRegimeEstimator に接続成功: '%s'", candidates[i]);
+                break;
+            }
         }
-        if (h_dfa == INVALID_HANDLE) {
-            Print("[Hybrid_DFA_EA] DFA インディケータのハンドル取得に失敗しました。");
+
+        if (h_kalman == INVALID_HANDLE) {
+            Print("[Hybrid_DFA_EA] KalmanRegimeEstimator インディケータのハンドル取得に失敗しました。");
             return INIT_FAILED;
         }
     }
@@ -211,8 +258,8 @@ int OnInit() {
 void OnDeinit(const int reason) {
     // バックテスト時はインジケータハンドルを解放しない（テスト完了後のチャート上にインジケータ表示を残すため）
     if (!MQLInfoInteger(MQL_TESTER)) {
-        if (h_dfa != INVALID_HANDLE)
-            IndicatorRelease(h_dfa);
+        if (h_kalman != INVALID_HANDLE)
+            IndicatorRelease(h_kalman);
         if (h_smoothedRsi != INVALID_HANDLE)
             IndicatorRelease(h_smoothedRsi);
         if (h_multiDualMa != INVALID_HANDLE)
@@ -259,34 +306,43 @@ bool UpdateSystemState(SSystemState& state) {
     // ※ DFA / ATR は Phase 4 で各々上位足の iTime で個別取得に変更済み
     datetime bar1_time = iTime(_Symbol, _Period, 1);
 
-    // 1. DFA 指数の取得
-    if (InpUseDfa && h_dfa != INVALID_HANDLE) {
-        double dfaBuf[];
-        ArraySetAsSeries(dfaBuf, true);
+    // 1. カルマンフィルター レジーム判定の取得
+    if (InpUseKalman && h_kalman != INVALID_HANDLE) {
+        double zBuf[], slopeBuf[];
+        ArraySetAsSeries(zBuf, true);
+        ArraySetAsSeries(slopeBuf, true);
 
-        // Phase 4: h_dfa はチャート足上で上位足から同期展開されているため、チャート足の直近確定足(Bar 1)を参照
-        int copied = CopyBuffer(h_dfa, 0, 1, 1, dfaBuf);
-        if (copied <= 0) {
-            copied = CopyBuffer(h_dfa, 0, bar1_time, 1, dfaBuf);
+        // バッファ0: ZScore, バッファ2: Slope(beta)
+        int copiedZ = CopyBuffer(h_kalman, 0, 1, 1, zBuf);
+        if (copiedZ <= 0) {
+            copiedZ = CopyBuffer(h_kalman, 0, bar1_time, 1, zBuf);
         }
-        if (copied > 0) {
-            state.alpha = dfaBuf[0];
-            // Phase 3: ヒステリシス付き状態遷移機械でレジーム判定
-            ENUM_REGIME_TYPE newRegime = UpdateRegimeWithHysteresis(
-                g_currentRegime, state.alpha, InpDfaThresholdLow, InpDfaThresholdHigh);
+
+        int copiedSlope = CopyBuffer(h_kalman, 2, 1, 1, slopeBuf);
+        if (copiedSlope <= 0) {
+            copiedSlope = CopyBuffer(h_kalman, 2, bar1_time, 1, slopeBuf);
+        }
+
+        if (copiedZ > 0) {
+            state.kalman_z = zBuf[0];
+            state.kalman_slope = (copiedSlope > 0) ? slopeBuf[0] : 0.0;
+            state.alpha = state.kalman_z; // 後方互換用
+
+            // カルマンレジーム判定 (Z >= 2.0: 上昇トレンド, Z <= -2.0: 下降トレンド, 間: レンジ)
+            ENUM_REGIME_TYPE newRegime = DetermineKalmanRegime(state.kalman_z, InpKalmanZThreshold);
             if (newRegime != g_currentRegime) {
                 string prevStr = (g_currentRegime == REGIME_RANGE ? "RANGE" :
-                                  (g_currentRegime == REGIME_TREND ? "TREND" :
-                                   (g_currentRegime == REGIME_TRANSITION ? "TRANSITION" : "NONE")));
+                                  (g_currentRegime == REGIME_UP_TREND ? "UP_TREND" :
+                                   (g_currentRegime == REGIME_DOWN_TREND ? "DOWN_TREND" : "NONE")));
                 string newStr = (newRegime == REGIME_RANGE ? "RANGE" :
-                                 (newRegime == REGIME_TREND ? "TREND" : "TRANSITION"));
-                PrintFormat("[Hybrid_DFA_EA] レジーム遷移: %s -> %s (Alpha=%.4f)",
-                            prevStr, newStr, state.alpha);
+                                 (newRegime == REGIME_UP_TREND ? "UP_TREND" : "DOWN_TREND"));
+                PrintFormat("[Hybrid_DFA_EA] カルマンレジーム遷移: %s -> %s (Z-Score=%.2f, Slope=%.5e)",
+                            prevStr, newStr, state.kalman_z, state.kalman_slope);
                 g_currentRegime = newRegime;
             }
             state.regime = g_currentRegime;
         } else {
-            Print("[Hybrid_DFA_EA] DFA バッファ取得エラー");
+            Print("[Hybrid_DFA_EA] KalmanRegimeEstimator バッファ取得エラー");
             return false;
         }
     }
@@ -356,9 +412,11 @@ bool UpdateSystemState(SSystemState& state) {
     static bool isFirstUpdate = true;
     if (isFirstUpdate) {
         isFirstUpdate = false;
-        string regStr = (state.regime == REGIME_RANGE ? "RANGE" : (state.regime == REGIME_TREND ? "TREND" : "TRANSITION"));
-        PrintFormat("[Hybrid_DFA_EA] 初回状態取得成功: DFA Alpha=%.4f (Regime=%s), RSI[1]=%.2f, ALMA Fast[1]=%.5f Slow[1]=%.5f Signal[1]=%.1f",
-                    state.alpha, regStr, state.smoothed_rsi_1, state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
+        string regStr = (state.regime == REGIME_RANGE ? "RANGE" :
+                         (state.regime == REGIME_UP_TREND ? "UP_TREND" :
+                          (state.regime == REGIME_DOWN_TREND ? "DOWN_TREND" : "NONE")));
+        PrintFormat("[Hybrid_DFA_EA] 初回状態取得成功: Kalman Z=%.2f, Slope=%.5e (Regime=%s), RSI[1]=%.2f, ALMA Fast[1]=%.5f Slow[1]=%.5f Signal[1]=%.1f",
+                    state.kalman_z, state.kalman_slope, regStr, state.smoothed_rsi_1, state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
     }
 
     return true;
@@ -367,7 +425,7 @@ bool UpdateSystemState(SSystemState& state) {
 //+------------------------------------------------------------------+
 //| ポジションクローズヘルパー (特定戦略または全クローズ)            |
 //+------------------------------------------------------------------+
-void ClosePositionsByStrategy(const ENUM_STRATEGY_SOURCE targetSource) {
+void ClosePositionsByStrategy(const ENUM_STRATEGY_SOURCE targetSource, const int filterType = -1) {
     for (int i = PositionsTotal() - 1; i >= 0; i--) {
         if (m_position.SelectByIndex(i)) {
             if (m_position.Symbol() == _Symbol) {
@@ -386,7 +444,7 @@ void ClosePositionsByStrategy(const ENUM_STRATEGY_SOURCE targetSource) {
                     shouldClose = true;
                 }
 
-                if (shouldClose) {
+                if (shouldClose && (filterType == -1 || m_position.PositionType() == filterType)) {
                     m_trade.PositionClose(m_position.Ticket());
                 }
             }
@@ -523,24 +581,34 @@ void OnTick() {
     CountOpenPositions(rangeBuys, rangeSells, trendBuys, trendSells);
 
     //------------------------------------------------------------------
-    // 1. レジーム逆行時の強制決済 (0.50 基準線跨ぎ判定) (仕様 4.2)
+    // 1. レジーム逆行時の強制決済
     //------------------------------------------------------------------
-    if (InpUseDfa) {
-        // レンジポジション保有中、DFA Alpha が 0.50 を上回ったら強制決済
-        if ((rangeBuys > 0 || rangeSells > 0) && ShouldCloseRegimePosition(STRATEGY_RANGE, state.alpha, 0.50)) {
-            PrintFormat("[Hybrid_DFA_EA] レジーム逆行検知: DFA Alpha (%.4f) が 0.50 を上回ったためレンジポジションを決済します。",
-                        state.alpha);
+    if (InpUseKalman) {
+        // レンジポジション保有中、カルマンZスコアがトレンド領域 (|Z| >= InpKalmanZThreshold) に突入したら強制決済
+        if ((rangeBuys > 0 || rangeSells > 0) &&
+            ShouldCloseKalmanPosition(STRATEGY_RANGE, POSITION_TYPE_BUY, state.kalman_z, InpKalmanZThreshold)) {
+            PrintFormat("[Hybrid_DFA_EA] レジーム逆行検知: カルマンZスコア (%.2f) がトレンド領域 (|Z| >= %.1f) に突入したためレンジポジションを決済します。",
+                        state.kalman_z, InpKalmanZThreshold);
             ClosePositionsByStrategy(STRATEGY_RANGE);
             rangeBuys = 0;
             rangeSells = 0;
         }
 
-        // トレンドポジション保有中、DFA Alpha が 0.50 を下回ったら強制決済
-        if ((trendBuys > 0 || trendSells > 0) && ShouldCloseRegimePosition(STRATEGY_TREND, state.alpha, 0.50)) {
-            PrintFormat("[Hybrid_DFA_EA] レジーム逆行検知: DFA Alpha (%.4f) が 0.50 を下回ったためトレンドポジションを決済します。",
-                        state.alpha);
-            ClosePositionsByStrategy(STRATEGY_TREND);
+        // トレンドBUY保有中、Zスコアが 0.0 を下回ったら強制決済 (中心線割れ)
+        if (trendBuys > 0 &&
+            ShouldCloseKalmanPosition(STRATEGY_TREND, POSITION_TYPE_BUY, state.kalman_z, InpKalmanZThreshold, 0.0)) {
+            PrintFormat("[Hybrid_DFA_EA] レジーム逆行検知: カルマンZスコア (%.2f) が中央基準線 0.0 を下回ったためトレンドBUYポジションを決済します。",
+                        state.kalman_z);
+            ClosePositionsByStrategy(STRATEGY_TREND, POSITION_TYPE_BUY);
             trendBuys = 0;
+        }
+
+        // トレンドSELL保有中、Zスコアが 0.0 を上回ったら強制決済 (中心線超え)
+        if (trendSells > 0 &&
+            ShouldCloseKalmanPosition(STRATEGY_TREND, POSITION_TYPE_SELL, state.kalman_z, InpKalmanZThreshold, 0.0)) {
+            PrintFormat("[Hybrid_DFA_EA] レジーム逆行検知: カルマンZスコア (%.2f) が中央基準線 0.0 を上回ったためトレンドSELLポジションを決済します。",
+                        state.kalman_z);
+            ClosePositionsByStrategy(STRATEGY_TREND, POSITION_TYPE_SELL);
             trendSells = 0;
         }
     }
@@ -627,10 +695,12 @@ void OnTick() {
     //------------------------------------------------------------------
     // 2. エントリーシグナル判定
     //------------------------------------------------------------------
-    bool allowRange =
-        InpUseRangeStrategy && (!InpUseDfa || state.regime == REGIME_RANGE);
-    bool allowTrend =
-        InpUseTrendStrategy && (!InpUseDfa || state.regime == REGIME_TREND);
+    // レンジ戦略許可: レンジ相場 (|Z| < InpKalmanZThreshold)
+    bool allowRange = InpUseRangeStrategy && (!InpUseKalman || state.regime == REGIME_RANGE);
+
+    // トレンド戦略許可: 上昇トレンド(Z >= InpKalmanZThreshold)でBUY許可、下降トレンド(Z <= -InpKalmanZThreshold)でSELL許可
+    bool allowTrendBuy  = InpUseTrendStrategy && (!InpUseKalman || state.regime == REGIME_UP_TREND);
+    bool allowTrendSell = InpUseTrendStrategy && (!InpUseKalman || state.regime == REGIME_DOWN_TREND);
 
     // A. レンジ戦略シグナル (Super Smoother + RSI) - ゾーン復帰・脱出クロス方式
     if (allowRange) {
@@ -642,8 +712,8 @@ void OnTick() {
                 rangeSells = 0;
             }
             if (rangeBuys == 0) {
-                PrintFormat("[Hybrid_DFA_EA] レンジBUYシグナル検知: Alpha=%.4f (Low=%.2f), RSI[2]=%.2f, RSI[1]=%.2f",
-                            state.alpha, InpDfaThresholdLow, state.smoothed_rsi_2, state.smoothed_rsi_1);
+                PrintFormat("[Hybrid_DFA_EA] レンジBUYシグナル検知: Kalman Z=%.2f, RSI[2]=%.2f, RSI[1]=%.2f",
+                            state.kalman_z, state.smoothed_rsi_2, state.smoothed_rsi_1);
                 ExecuteOrder(ORDER_TYPE_BUY, STRATEGY_RANGE, state.atr);
             }
         }
@@ -655,15 +725,15 @@ void OnTick() {
                 rangeBuys = 0;
             }
             if (rangeSells == 0) {
-                PrintFormat("[Hybrid_DFA_EA] レンジSELLシグナル検知: Alpha=%.4f (Low=%.2f), RSI[2]=%.2f, RSI[1]=%.2f",
-                            state.alpha, InpDfaThresholdLow, state.smoothed_rsi_2, state.smoothed_rsi_1);
+                PrintFormat("[Hybrid_DFA_EA] レンジSELLシグナル検知: Kalman Z=%.2f, RSI[2]=%.2f, RSI[1]=%.2f",
+                            state.kalman_z, state.smoothed_rsi_2, state.smoothed_rsi_1);
                 ExecuteOrder(ORDER_TYPE_SELL, STRATEGY_RANGE, state.atr);
             }
         }
     }
 
     // B. トレンド戦略シグナル (Dual MA Cross)
-    if (allowTrend) {
+    if (InpUseTrendStrategy) {
         bool signalBuy = false;
         bool signalSell = false;
         bool useSchmitt = (InpTrendMaType == TREND_MA_ALMA && InpAlmaUseSchmittTrigger);
@@ -689,24 +759,24 @@ void OnTick() {
             }
         }
 
-        if (signalBuy) {
+        if (signalBuy && allowTrendBuy) {
             if (trendSells > 0) {
                 ClosePositionsByStrategy(STRATEGY_TREND);
                 trendSells = 0;
             }
             if (trendBuys == 0) {
-                PrintFormat("[Hybrid_DFA_EA] トレンドBUYシグナル検知: Alpha=%.4f (High=%.2f), Fast[1]=%.3f, Slow[1]=%.3f, Signal[1]=%.1f",
-                            state.alpha, InpDfaThresholdHigh, state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
+                PrintFormat("[Hybrid_DFA_EA] トレンドBUYシグナル検知: Kalman Z=%.2f (>=%.1f), Fast[1]=%.3f, Slow[1]=%.3f, Signal[1]=%.1f",
+                            state.kalman_z, InpKalmanZThreshold, state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
                 ExecuteOrder(ORDER_TYPE_BUY, STRATEGY_TREND, state.atr);
             }
-        } else if (signalSell) {
+        } else if (signalSell && allowTrendSell) {
             if (trendBuys > 0) {
                 ClosePositionsByStrategy(STRATEGY_TREND);
                 trendBuys = 0;
             }
             if (trendSells == 0) {
-                PrintFormat("[Hybrid_DFA_EA] トレンドSELLシグナル検知: Alpha=%.4f (High=%.2f), Fast[1]=%.3f, Slow[1]=%.3f, Signal[1]=%.1f",
-                            state.alpha, InpDfaThresholdHigh, state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
+                PrintFormat("[Hybrid_DFA_EA] トレンドSELLシグナル検知: Kalman Z=%.2f (<=-%.1f), Fast[1]=%.3f, Slow[1]=%.3f, Signal[1]=%.1f",
+                            state.kalman_z, InpKalmanZThreshold, state.alma_fast_1, state.alma_slow_1, state.alma_signal_1);
                 ExecuteOrder(ORDER_TYPE_SELL, STRATEGY_TREND, state.atr);
             }
         }

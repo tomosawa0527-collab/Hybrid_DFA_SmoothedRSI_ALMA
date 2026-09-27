@@ -14,8 +14,10 @@ enum ENUM_REGIME_TYPE {
   REGIME_NONE = 0,       // 未判定
   REGIME_RANGE = 1,      // レンジ相場 (反発性 / 平均回帰)
   REGIME_TRANSITION = 2, // 遷移状態 / ランダムウォーク (不感帯・静観)
-  REGIME_TREND = 3,      // トレンド相場 (持続性 / 追従)
-  REGIME_ALL = 4         // レジーム制限なし (DFA無効時)
+  REGIME_TREND = 3,      // トレンド相場 (持続性 / 追従 - 汎用)
+  REGIME_UP_TREND = 4,   // 上昇トレンド (カルマン Z >= 2.0)
+  REGIME_DOWN_TREND = 5, // 下降トレンド (カルマン Z <= -2.0)
+  REGIME_ALL = 6         // レジーム制限なし (無効時)
 };
 
 //+------------------------------------------------------------------+
@@ -107,7 +109,9 @@ ENUM_TIMEFRAMES ResolveTimeframe(const ENUM_HTF_MODE mode, const ENUM_TIMEFRAMES
 //| システム内部状態構造体                                           |
 //+------------------------------------------------------------------+
 struct SSystemState {
-  double alpha;            // 最新DFA指数
+  double kalman_z;         // 最新カルマンZスコア
+  double kalman_slope;     // 最新カルマン局所傾き (beta)
+  double alpha;            // 最新DFA指数 (後方互換用)
   double super_smoother;   // 最新Super Smoother値
   double smoothed_rsi_1;   // 前バー Smoothed RSI
   double smoothed_rsi_2;   // 前々バー Smoothed RSI
@@ -283,4 +287,59 @@ ENUM_REGIME_TYPE UpdateRegimeWithHysteresis(
     const double thresholdHigh) {
   return DetermineRegime(alpha, thresholdLow, thresholdHigh);
 }
+
+//+------------------------------------------------------------------+
+//| カルマンレジーム判定関数                                         |
+//| z >= threshold  => REGIME_UP_TREND (上昇トレンド: 買い優勢)      |
+//| z <= -threshold => REGIME_DOWN_TREND (下降トレンド: 売り優勢)    |
+//| その他          => REGIME_RANGE (レンジ相場 / 中立)               |
+//+------------------------------------------------------------------+
+ENUM_REGIME_TYPE DetermineKalmanRegime(
+    const double z,
+    const double threshold = 2.0) {
+
+  if (!MathIsValidNumber(z) || z == EMPTY_VALUE)
+    return REGIME_RANGE;
+
+  if (z >= threshold)
+    return REGIME_UP_TREND;
+  if (z <= -threshold)
+    return REGIME_DOWN_TREND;
+
+  return REGIME_RANGE;
+}
+
+//+------------------------------------------------------------------+
+//| カルマンレジーム逆行決済判定関数                                 |
+//| レンジポジション: |z| >= threshold でトレンド突入強制決済         |
+//| トレンドBUY: z < centerLine (0.0) で弱気/中立転落強制決済        |
+//| トレンドSELL: z > centerLine (0.0) で強気/中立転落強制決済       |
+//+------------------------------------------------------------------+
+bool ShouldCloseKalmanPosition(
+    const ENUM_STRATEGY_SOURCE source,
+    const ENUM_POSITION_TYPE posType,
+    const double z,
+    const double threshold = 2.0,
+    const double centerLine = 0.0) {
+
+  if (!MathIsValidNumber(z) || z == EMPTY_VALUE)
+    return false;
+
+  if (source == STRATEGY_RANGE) {
+    // レンジポジション: Zがトレンド領域 (|Z| >= threshold) に突入したら決済
+    return (MathAbs(z) >= threshold);
+  } else if (source == STRATEGY_TREND) {
+    // トレンドBUY: 中心線(0.0)を下回る、または下降トレンド突入で決済
+    if (posType == POSITION_TYPE_BUY) {
+      return (z < centerLine);
+    }
+    // トレンドSELL: 中心線(0.0)を上回る、または上昇トレンド突入で決済
+    else if (posType == POSITION_TYPE_SELL) {
+      return (z > centerLine);
+    }
+  }
+
+  return false;
+}
+
 
