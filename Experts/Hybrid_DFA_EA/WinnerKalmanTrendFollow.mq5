@@ -216,8 +216,30 @@ int CreateKalmanHandle()
    {
       // チャート足(_Period)でバインドしつつ、計算時間軸としてInpSystemTFを渡す
       int h = iCustom(_Symbol, _Period, candidates[i],
-                      InpSystemTF, true, true, InpTargetLagBars, 1000,
-                      0.0, 1e-8, 1e-4, 1.0, InpZEnter, InpZExit, true, PRICE_CLOSE);
+                      // --- Group 1: マルチタイムフレーム (MTF) 設定 ---
+                      "=== マルチタイムフレーム (MTF) 設定 ===",
+                      InpSystemTF,
+                      true, // InpAutoTimeframeScale
+
+                      // --- Group 2: 解析的自律キャリブレーション ---
+                      "=== 解析的自律キャリブレーション (Closed-Form Analytical) ===",
+                      true, // InpAutoCalibration
+                      InpTargetLagBars,
+                      1000, // InpCalibSamples
+
+                      // --- Group 3: カルマンフィルター パラメータ ---
+                      "=== カルマンフィルター パラメータ (手動設定時またはフォールバック) ===",
+                      0.0,  // InpManualQMu
+                      1e-8, // InpManualQBeta
+                      1e-4, // InpManualR
+                      1.0,  // InpManualInitialP
+
+                      // --- Group 4: レジーム判定 (ヒステリシス) パラメータ ---
+                      "=== レジーム判定 (ヒステリシス) パラメータ ===",
+                      InpZEnter,
+                      InpZExit,
+                      true, // InpAllowDirectReversal
+                      PRICE_CLOSE);
       if(h != INVALID_HANDLE)
       {
          PrintFormat("[+] KalmanRegimeEstimator ハンドル取得成功: '%s'", candidates[i]);
