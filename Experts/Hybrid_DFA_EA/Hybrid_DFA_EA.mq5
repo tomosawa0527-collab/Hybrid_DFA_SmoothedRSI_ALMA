@@ -13,7 +13,7 @@
 #property tester_indicator "KalmanRegimeEstimator.ex5"
 #property tester_indicator "Indicators\\Hybrid_DFA_EA\\KalmanRegimeEstimator.ex5"
 
-#include "..\..\Include\Hybrid_DFA_EA\DFA_Common.mqh"
+#include "..\..\Include\Hybrid_DFA_EA\KalmanStrategy_Common.mqh"
 #include <Trade\PositionInfo.mqh>
 #include <Trade\Trade.mqh>
 
