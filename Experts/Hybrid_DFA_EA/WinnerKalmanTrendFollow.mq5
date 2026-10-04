@@ -9,6 +9,8 @@
 #property description "カルマンレジーム推定器と移動平均クロスに基づくWinnerCode型トレンドフォロー売買システム"
 #property strict
 
+#include <Hybrid_DFA_EA\MultiTrendMA.mqh>
+
 //--- 外部インジケーターハンドル
 int g_kalman_handle   = INVALID_HANDLE;
 int g_multi_ma_handle = INVALID_HANDLE;
@@ -264,12 +266,12 @@ int CreateMultiTrendMaHandle()
       int h = iCustom(_Symbol, _Period, candidates[i],
                       // === 移動平均線 基本設定 ===
                       "=== 移動平均線 基本設定 ===",
-                      3,                 // InpFastMaType: TREND_MA_LWMA
-                      InpFastMAPeriod,   // InpFastWindow: 8
-                      1,                 // InpMidMaType:  TREND_MA_EMA
-                      InpMidMAPeriod,    // InpMidWindow:  21
-                      0,                 // InpSlowMaType: TREND_MA_SMA
-                      InpSlowMAPeriod,   // InpSlowWindow: 89
+                      TREND_MA_LWMA,   // InpFastMaType: LWMA
+                      InpFastMAPeriod, // InpFastWindow: 8
+                      TREND_MA_EMA,    // InpMidMaType:  EMA
+                      InpMidMAPeriod,  // InpMidWindow:  21
+                      TREND_MA_SMA,    // InpSlowMaType: SMA
+                      InpSlowMAPeriod, // InpSlowWindow: 89
                       PRICE_CLOSE);
       if(h != INVALID_HANDLE)
       {
@@ -814,9 +816,9 @@ void OnTick()
    ArraySetAsSeries(ma_fast, true);
    ArraySetAsSeries(ma_mid,  true);
    ArraySetAsSeries(ma_slow, true);
-   if(CopyBuffer(g_multi_ma_handle, 0, 1, 2, ma_fast) <= 0 ||
-      CopyBuffer(g_multi_ma_handle, 1, 1, 2, ma_mid)  <= 0 ||
-      CopyBuffer(g_multi_ma_handle, 2, 1, 2, ma_slow) <= 0) return;
+   if(CopyBuffer(g_multi_ma_handle, MULTI_TREND_MA_BUFFER_FAST, 1, 2, ma_fast) <= 0 ||
+      CopyBuffer(g_multi_ma_handle, MULTI_TREND_MA_BUFFER_MID,  1, 2, ma_mid)  <= 0 ||
+      CopyBuffer(g_multi_ma_handle, MULTI_TREND_MA_BUFFER_SLOW, 1, 2, ma_slow) <= 0) return;
 
    double atr[], atr_fast[], atr_slow[], rsi[];
    ArraySetAsSeries(atr,      true);
