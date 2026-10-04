@@ -108,7 +108,7 @@ bool     g_partial_closed   = false; // 部分利確済みフラグ
 //+------------------------------------------------------------------+
 int CreateKalmanIndicatorHandle(const string indicator_path)
 {
-   return iCustom(_Symbol, InpKalmanTF, indicator_path,
+   return iCustom(_Symbol, _Period, indicator_path,
                   // --- Group 1: マルチタイムフレーム (MTF) 設定 ---
                   "=== マルチタイムフレーム (MTF) 設定 ===",
                   InpKalmanTF,
