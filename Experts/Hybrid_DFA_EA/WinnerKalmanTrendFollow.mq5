@@ -19,6 +19,14 @@ int g_atr_fast_handle = INVALID_HANDLE;
 int g_atr_slow_handle = INVALID_HANDLE;
 int g_rsi_handle      = INVALID_HANDLE;
 
+//--- カルマン時間軸モード定義
+enum ENUM_KALMAN_TF_MODE
+{
+   KALMAN_TF_NEXT_HIGHER = 0, // 1つ上位足 (自動判別: H1->H4, M15->H1, H4->D1 推奨)
+   KALMAN_TF_CURRENT     = 1, // カレント足 (執行足と同一時間軸)
+   KALMAN_TF_MANUAL      = 2  // 手動明示指定 (下記 InpKalmanCustomTF を使用)
+};
+
 //--- システム状態管理構造体
 struct SystemState
 {
@@ -46,14 +54,21 @@ SystemState g_state;
 
 //--- 入力パラメータ宣言
 input group "=== システム基本設定 ==="
-input ulong           InpMagicNumber             = 20260328;       // マジックナンバー
-input double          InpRiskPercent             = 1.0;            // リスク許容率 (%)
-input ENUM_TIMEFRAMES InpSystemTF                = PERIOD_H1;      // システム統一タイムフレーム
+input ulong                InpMagicNumber             = 20260328;              // マジックナンバー
+input double               InpRiskPercent             = 1.0;                   // リスク許容率 (%)
+input ENUM_TIMEFRAMES      InpSystemTF                = PERIOD_CURRENT;        // 執行・移動平均線 タイムフレーム (カレント足推奨)
+
+input group "=== カルマンレジーム タイムフレーム選択 ==="
+input ENUM_KALMAN_TF_MODE  InpKalmanTfMode            = KALMAN_TF_NEXT_HIGHER; // カルマン時間軸モード (自動上位足 / カレント / 手動)
+input ENUM_TIMEFRAMES      InpKalmanCustomTF          = PERIOD_H4;             // [手動指定時] カルマンタイムフレーム
 
 input group "=== カルマンレジーム推定器設定 ==="
-input double          InpTargetLagBars           = 10.0;           // カルマン時定数 (tau)
-input double          InpZEnter                  = 2.0;            // レジーム突入閾値
-input double          InpZExit                   = 1.0;            // レジーム離脱閾値
+input bool                 InpKalmanAutoCalib         = false;                 // カルマン自動キャリブレーション (false: 固定値推奨, true: 動的計測)
+input double               InpTargetLagBars           = 10.0;                  // カルマン時定数 (tau: Auto時のみ有効)
+input string               InpKalmanQBeta             = "1.137e-10";           // 傾きプロセスノイズ q_beta (手動設定用, 例: 1.137e-10)
+input string               InpKalmanR                 = "1.137e-06";           // 観測ノイズ分散 R (手動設定用, 例: 1.137e-06)
+input double               InpZEnter                  = 2.0;                   // レジーム突入閾値
+input double               InpZExit                   = 1.0;                   // レジーム離脱閾値
 
 input group "=== 移動平均線 & オシレーター設定 ==="
 input int             InpFastMAPeriod            = 8;              // 短期LWMA期間
@@ -202,6 +217,37 @@ void LoadPersistentState()
 }
 
 //+------------------------------------------------------------------+
+//| 1つ上位タイムフレームの自動判別ヘルパー                          |
+//+------------------------------------------------------------------+
+ENUM_TIMEFRAMES GetNextHigherTimeframe(const ENUM_TIMEFRAMES base_tf)
+{
+   switch(base_tf)
+   {
+      case PERIOD_M1:  return PERIOD_M5;
+      case PERIOD_M2:  return PERIOD_M5;
+      case PERIOD_M3:  return PERIOD_M15;
+      case PERIOD_M4:  return PERIOD_M15;
+      case PERIOD_M5:  return PERIOD_M15;
+      case PERIOD_M6:  return PERIOD_M30;
+      case PERIOD_M10: return PERIOD_M30;
+      case PERIOD_M12: return PERIOD_H1;
+      case PERIOD_M15: return PERIOD_H1;  // M15執行時はH1大局を推奨
+      case PERIOD_M20: return PERIOD_H1;
+      case PERIOD_M30: return PERIOD_H4;  // M30執行時はH4大局
+      case PERIOD_H1:  return PERIOD_H4;  // H1執行時はH4大局 (仕様標準)
+      case PERIOD_H2:  return PERIOD_H8;
+      case PERIOD_H3:  return PERIOD_H12;
+      case PERIOD_H4:  return PERIOD_D1;  // H4執行時はD1大局
+      case PERIOD_H6:  return PERIOD_D1;
+      case PERIOD_H8:  return PERIOD_D1;
+      case PERIOD_H12: return PERIOD_D1;
+      case PERIOD_D1:  return PERIOD_W1;  // D1執行時はW1大局
+      case PERIOD_W1:  return PERIOD_MN1; // W1執行時はMN1大局
+      default:         return PERIOD_H4;
+   }
+}
+
+//+------------------------------------------------------------------+
 //| カルマンインジケーターハンドル生成ヘルパー                       |
 //+------------------------------------------------------------------+
 int CreateKalmanHandle()
@@ -212,27 +258,42 @@ int CreateKalmanHandle()
    candidates[2] = "Hybrid_DFA_EA/KalmanRegimeEstimator";
    candidates[3] = "KalmanRegimeEstimator";
 
+   ENUM_TIMEFRAMES exec_tf = (InpSystemTF == PERIOD_CURRENT) ? _Period : InpSystemTF;
+   ENUM_TIMEFRAMES k_tf    = exec_tf;
+
+   if(InpKalmanTfMode == KALMAN_TF_NEXT_HIGHER)
+      k_tf = GetNextHigherTimeframe(exec_tf);
+   else if(InpKalmanTfMode == KALMAN_TF_CURRENT)
+      k_tf = exec_tf;
+   else if(InpKalmanTfMode == KALMAN_TF_MANUAL)
+      k_tf = (InpKalmanCustomTF == PERIOD_CURRENT) ? exec_tf : InpKalmanCustomTF;
+
+   double q_beta = StringToDouble(InpKalmanQBeta);
+   double r      = StringToDouble(InpKalmanR);
+   if(q_beta <= 0.0) q_beta = 1.137e-10;
+   if(r <= 0.0)      r      = 1.137e-06;
+
    for(int i = 0; i < 4; i++)
    {
-      // チャート足(_Period)でバインドしつつ、計算時間軸としてInpSystemTFを渡す
+      // チャート足(_Period)でバインドしつつ、計算時間軸としてk_tfを渡す
       int h = iCustom(_Symbol, _Period, candidates[i],
                       // --- Group 1: マルチタイムフレーム (MTF) 設定 ---
                       "=== マルチタイムフレーム (MTF) 設定 ===",
-                      InpSystemTF,
-                      true, // InpAutoTimeframeScale
+                      k_tf,
+                      false, // InpAutoTimeframeScale: 二重スケーリングを防ぐため必ず false
 
                       // --- Group 2: 解析的自律キャリブレーション ---
                       "=== 解析的自律キャリブレーション (Closed-Form Analytical) ===",
-                      true, // InpAutoCalibration
+                      InpKalmanAutoCalib,
                       InpTargetLagBars,
                       1000, // InpCalibSamples
 
                       // --- Group 3: カルマンフィルター パラメータ ---
                       "=== カルマンフィルター パラメータ (手動設定時またはフォールバック) ===",
-                      0.0,  // InpManualQMu
-                      1e-8, // InpManualQBeta
-                      1e-4, // InpManualR
-                      1.0,  // InpManualInitialP
+                      0.0,    // InpManualQMu
+                      q_beta, // InpManualQBeta
+                      r,      // InpManualR
+                      1.0,    // InpManualInitialP
 
                       // --- Group 4: レジーム判定 (ヒステリシス) パラメータ ---
                       "=== レジーム判定 (ヒステリシス) パラメータ ===",
@@ -242,7 +303,9 @@ int CreateKalmanHandle()
                       PRICE_CLOSE);
       if(h != INVALID_HANDLE)
       {
-         PrintFormat("[+] KalmanRegimeEstimator ハンドル取得成功: '%s'", candidates[i]);
+         PrintFormat("[+] KalmanRegimeEstimator ハンドル取得成功: '%s' (執行足: %s, カルマン足: %s, モード: %s, AutoCalib: %s, q_beta: %.3e [%s], R: %.3e [%s])",
+                     candidates[i], EnumToString(exec_tf), EnumToString(k_tf), EnumToString(InpKalmanTfMode),
+                     InpKalmanAutoCalib ? "true" : "false", q_beta, InpKalmanQBeta, r, InpKalmanR);
          return(h);
       }
    }
@@ -290,6 +353,23 @@ int OnInit()
    if(MQLInfoInteger(MQL_TESTER) && InpNewsFilter)
    {
       Print("[Tester Warning] ストラテジーテスター環境ではMQL5カレンダーAPIが無効なため、経済指標フィルターは機能しません。指標停止を厳密に再現する場合は外部CSV連携が必要です。");
+   }
+
+   // カルマン手動設定時の入力値安全バリデーション
+   if(!InpKalmanAutoCalib)
+   {
+      double q_beta = StringToDouble(InpKalmanQBeta);
+      double r      = StringToDouble(InpKalmanR);
+      if(q_beta <= 0.0)
+      {
+         PrintFormat("[Error] InpKalmanQBeta ('%s') のパース結果 (%.3e) が不正です。正の指数表記 (例: 1.137e-10) を指定してください。", InpKalmanQBeta, q_beta);
+         return(INIT_PARAMETERS_INCORRECT);
+      }
+      if(r <= 0.0)
+      {
+         PrintFormat("[Error] InpKalmanR ('%s') のパース結果 (%.3e) が不正です。正の指数表記 (例: 1.137e-06) を指定してください。", InpKalmanR, r);
+         return(INIT_PARAMETERS_INCORRECT);
+      }
    }
 
    g_kalman_handle = CreateKalmanHandle();

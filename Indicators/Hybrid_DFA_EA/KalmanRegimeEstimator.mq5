@@ -40,8 +40,8 @@ input int             InpCalibSamples         = 1000;           // 観測ノイ�
 
 input group "=== カルマンフィルター パラメータ (手動設定時またはフォールバック) ==="
 input double          InpManualQMu            = 0.0;            // プロセスノイズ分散 (水準: q_mu, 平滑トレンド時は0.0)
-input double          InpManualQBeta          = 1e-8;           // プロセスノイズ分散 (傾き: q_beta)
-input double          InpManualR              = 1e-4;           // 観測ノイズ分散 (R)
+input double          InpManualQBeta          = 1e-10;          // プロセスノイズ分散 (傾き: q_beta)
+input double          InpManualR              = 1e-06;          // 観測ノイズ分散 (R)
 input double          InpManualInitialP       = 1.0;            // 初期誤差共分散スケール (P0)
 
 input group "=== レジーム判定 (ヒステリシス) パラメータ ==="
