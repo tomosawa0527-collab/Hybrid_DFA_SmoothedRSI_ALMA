@@ -11,9 +11,7 @@
 
 //--- 外部インジケーターハンドル
 int g_kalman_handle   = INVALID_HANDLE;
-int g_ma_fast_handle  = INVALID_HANDLE;
-int g_ma_mid_handle   = INVALID_HANDLE;
-int g_ma_slow_handle  = INVALID_HANDLE;
+int g_multi_ma_handle = INVALID_HANDLE;
 int g_atr_handle      = INVALID_HANDLE;
 int g_atr_fast_handle = INVALID_HANDLE;
 int g_atr_slow_handle = INVALID_HANDLE;
@@ -250,6 +248,39 @@ int CreateKalmanHandle()
 }
 
 //+------------------------------------------------------------------+
+//| MultiTrendMA インジケーターハンドル生成ヘルパー                 |
+//+------------------------------------------------------------------+
+int CreateMultiTrendMaHandle()
+{
+   string candidates[4];
+   candidates[0] = "Hybrid_DFA_EA\\MultiTrendMA";
+   candidates[1] = "Indicators\\Hybrid_DFA_EA\\MultiTrendMA";
+   candidates[2] = "Hybrid_DFA_EA/MultiTrendMA";
+   candidates[3] = "MultiTrendMA";
+
+   for(int i = 0; i < 4; i++)
+   {
+      // チャート足(_Period)でバインドし、Fast/Mid/SlowのMAタイプ・期間を指定
+      int h = iCustom(_Symbol, _Period, candidates[i],
+                      // === 移動平均線 基本設定 ===
+                      "=== 移動平均線 基本設定 ===",
+                      3,                 // InpFastMaType: TREND_MA_LWMA
+                      InpFastMAPeriod,   // InpFastWindow: 8
+                      1,                 // InpMidMaType:  TREND_MA_EMA
+                      InpMidMAPeriod,    // InpMidWindow:  21
+                      0,                 // InpSlowMaType: TREND_MA_SMA
+                      InpSlowMAPeriod,   // InpSlowWindow: 89
+                      PRICE_CLOSE);
+      if(h != INVALID_HANDLE)
+      {
+         PrintFormat("[+] MultiTrendMA ハンドル取得成功: '%s'", candidates[i]);
+         return(h);
+      }
+   }
+   return(INVALID_HANDLE);
+}
+
+//+------------------------------------------------------------------+
 //| 初期化処理                                                       |
 //+------------------------------------------------------------------+
 int OnInit()
@@ -266,17 +297,19 @@ int OnInit()
       return(INIT_FAILED);
    }
 
-   g_ma_fast_handle = iMA(_Symbol, InpSystemTF, InpFastMAPeriod, 0, MODE_LWMA, PRICE_CLOSE);
-   g_ma_mid_handle  = iMA(_Symbol, InpSystemTF, InpMidMAPeriod,  0, MODE_EMA,  PRICE_CLOSE);
-   g_ma_slow_handle = iMA(_Symbol, InpSystemTF, InpSlowMAPeriod, 0, MODE_SMA,  PRICE_CLOSE);
+   g_multi_ma_handle = CreateMultiTrendMaHandle();
+   if(g_multi_ma_handle == INVALID_HANDLE)
+   {
+      Print("[Fatal Error] MultiTrendMA のロードに失敗しました。");
+      return(INIT_FAILED);
+   }
 
    g_atr_handle      = iATR(_Symbol, InpSystemTF, InpATRPeriod);
    g_atr_fast_handle = iATR(_Symbol, InpSystemTF, 5);
    g_atr_slow_handle = iATR(_Symbol, InpSystemTF, 20);
    g_rsi_handle      = iRSI(_Symbol, InpSystemTF, 14, PRICE_CLOSE);
 
-   if(g_ma_fast_handle == INVALID_HANDLE || g_ma_mid_handle == INVALID_HANDLE || g_ma_slow_handle == INVALID_HANDLE ||
-      g_atr_handle == INVALID_HANDLE || g_atr_fast_handle == INVALID_HANDLE || g_atr_slow_handle == INVALID_HANDLE ||
+   if(g_atr_handle == INVALID_HANDLE || g_atr_fast_handle == INVALID_HANDLE || g_atr_slow_handle == INVALID_HANDLE ||
       g_rsi_handle == INVALID_HANDLE)
    {
       Print("[Fatal Error] 基本インジケーターハンドルの取得に失敗しました。");
@@ -318,9 +351,7 @@ void OnDeinit(const int reason)
    if(!MQLInfoInteger(MQL_TESTER))
    {
       if(g_kalman_handle   != INVALID_HANDLE) IndicatorRelease(g_kalman_handle);
-      if(g_ma_fast_handle  != INVALID_HANDLE) IndicatorRelease(g_ma_fast_handle);
-      if(g_ma_mid_handle   != INVALID_HANDLE) IndicatorRelease(g_ma_mid_handle);
-      if(g_ma_slow_handle  != INVALID_HANDLE) IndicatorRelease(g_ma_slow_handle);
+      if(g_multi_ma_handle != INVALID_HANDLE) IndicatorRelease(g_multi_ma_handle);
       if(g_atr_handle      != INVALID_HANDLE) IndicatorRelease(g_atr_handle);
       if(g_atr_fast_handle != INVALID_HANDLE) IndicatorRelease(g_atr_fast_handle);
       if(g_atr_slow_handle != INVALID_HANDLE) IndicatorRelease(g_atr_slow_handle);
@@ -783,9 +814,9 @@ void OnTick()
    ArraySetAsSeries(ma_fast, true);
    ArraySetAsSeries(ma_mid,  true);
    ArraySetAsSeries(ma_slow, true);
-   if(CopyBuffer(g_ma_fast_handle, 0, 1, 2, ma_fast) <= 0 ||
-      CopyBuffer(g_ma_mid_handle,  0, 1, 2, ma_mid)  <= 0 ||
-      CopyBuffer(g_ma_slow_handle, 0, 1, 2, ma_slow) <= 0) return;
+   if(CopyBuffer(g_multi_ma_handle, 0, 1, 2, ma_fast) <= 0 ||
+      CopyBuffer(g_multi_ma_handle, 1, 1, 2, ma_mid)  <= 0 ||
+      CopyBuffer(g_multi_ma_handle, 2, 1, 2, ma_slow) <= 0) return;
 
    double atr[], atr_fast[], atr_slow[], rsi[];
    ArraySetAsSeries(atr,      true);
