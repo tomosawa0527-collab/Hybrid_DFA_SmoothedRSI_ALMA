@@ -205,29 +205,39 @@ int OnInit() {
                     InpAlmaUseSchmittTrigger ? "ON" : "OFF", InpAlmaHysteresisFactor);
 
         h_multiDualMa =
-            iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\MultiDualMA",
-                    InpTrendMaType,
-                    InpMaFastWindow, InpMaSlowWindow,
-                    InpAlmaFastOffset, InpAlmaSlowOffset,
-                    InpAlmaFastSigma, InpAlmaSlowSigma,
+            iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\MultiTrendMA",
+                    "=== 移動平均線 基本設定 ===",
+                    InpTrendMaType, InpMaFastWindow,
+                    InpTrendMaType, 0, // Midは無効
+                    InpTrendMaType, InpMaSlowWindow,
                     InpMaAppliedPrice,
+                    "=== ALMA 専用パラメータ ===",
+                    InpAlmaFastOffset, InpAlmaFastSigma,
+                    InpAlmaFastOffset, InpAlmaFastSigma,
+                    InpAlmaSlowOffset, InpAlmaSlowSigma,
+                    "=== 高度フィルター設定 (オプション) ===",
                     InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
                     InpAlmaUseZeroLagLead, InpAlmaLeadFactor,
                     InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
         if (h_multiDualMa == INVALID_HANDLE) {
             h_multiDualMa =
-                iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\MultiDualMA",
-                        InpTrendMaType,
-                        InpMaFastWindow, InpMaSlowWindow,
-                        InpAlmaFastOffset, InpAlmaSlowOffset,
-                        InpAlmaFastSigma, InpAlmaSlowSigma,
+                iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\MultiTrendMA",
+                        "=== 移動平均線 基本設定 ===",
+                        InpTrendMaType, InpMaFastWindow,
+                        InpTrendMaType, 0, // Midは無効
+                        InpTrendMaType, InpMaSlowWindow,
                         InpMaAppliedPrice,
+                        "=== ALMA 専用パラメータ ===",
+                        InpAlmaFastOffset, InpAlmaFastSigma,
+                        InpAlmaFastOffset, InpAlmaFastSigma,
+                        InpAlmaSlowOffset, InpAlmaSlowSigma,
+                        "=== 高度フィルター設定 (オプション) ===",
                         InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
                         InpAlmaUseZeroLagLead, InpAlmaLeadFactor,
                         InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
         }
         if (h_multiDualMa == INVALID_HANDLE) {
-            Print("[Hybrid_DFA_EA] MultiDualMA インディケータのハンドル取得に失敗しました。");
+            Print("[Hybrid_DFA_EA] MultiTrendMA インディケータのハンドル取得に失敗しました。");
             return INIT_FAILED;
         }
     }
@@ -369,7 +379,7 @@ bool UpdateSystemState(SSystemState& state) {
         ArraySetAsSeries(sigBuf, true);
 
         if (CopyBuffer(h_multiDualMa, 0, 1, 2, fastBuf) == 2 &&
-            CopyBuffer(h_multiDualMa, 1, 1, 2, slowBuf) == 2) {
+            CopyBuffer(h_multiDualMa, 2, 1, 2, slowBuf) == 2) {
             state.alma_fast_1 = fastBuf[0];
             state.alma_fast_2 = fastBuf[1];
             state.alma_slow_1 = slowBuf[0];
@@ -379,7 +389,7 @@ bool UpdateSystemState(SSystemState& state) {
             return false;
         }
 
-        if (CopyBuffer(h_multiDualMa, 3, 1, 2, sigBuf) == 2) {
+        if (CopyBuffer(h_multiDualMa, 4, 1, 2, sigBuf) == 2) {
             state.alma_signal_1 = sigBuf[0];
             state.alma_signal_2 = sigBuf[1];
         } else {
