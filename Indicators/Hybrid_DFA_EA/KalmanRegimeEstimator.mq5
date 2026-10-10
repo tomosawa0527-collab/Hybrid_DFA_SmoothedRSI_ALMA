@@ -1,78 +1,92 @@
 //+------------------------------------------------------------------+
-//|                                        KalmanRegimeEstimator.mq5 |
+//|                                     KalmanRegimeEstimator.mq5    |
 //|                                  Copyright 2026, Quant Research  |
-//|    Smooth Trend Model (Analytical Closed-Form Calibration) Regime|
+//| Smooth Trend Model (Rolling Rice Estimator & Polar Placement)   |
 //+------------------------------------------------------------------+
 #property copyright   "Copyright 2026, Quant Research"
 #property link        "https://www.mql5.com"
-#property version     "4.10"
-#property description "平滑トレンドモデル・Rice推定量＆極配置解析解による自律客観キャリブレーション完全版"
+#property version     "5.20"
+#property description "平滑トレンドモデル・確定足ローリングRice推定量＆現在足リアルタイム追従完全版"
 #property indicator_separate_window
 #property indicator_buffers 4
 #property indicator_plots   1
 
 //--- プロット定義 (Zスコアカラーライン)
-#property indicator_label1  "Kalman Z-Score"
-#property indicator_type1   DRAW_COLOR_LINE
-#property indicator_color1  clrDodgerBlue, clrCrimson, clrDarkGray
-#property indicator_style1  STYLE_SOLID
-#property indicator_width1  2
+#property indicator_label1 "Kalman Z-Score"
+#property indicator_type1  DRAW_COLOR_LINE
+#property indicator_color1 clrDodgerBlue, clrCrimson, clrDarkGray
+#property indicator_style1 STYLE_SOLID
+#property indicator_width1 2
 
 //--- レジーム定義定数
-#define REGIME_UP     1.0    // 上昇トレンド
-#define REGIME_DOWN  -1.0    // 下降トレンド
-#define REGIME_RANGE  0.0    // レンジ相場
+#define REGIME_UP     1.0  // 上昇トレンド
+#define REGIME_DOWN  -1.0  // 下降トレンド
+#define REGIME_RANGE  0.0  // レンジ相場
 
 //--- カラーバッファ用インデックス
-#define COLOR_UP      0      // clrDodgerBlue
-#define COLOR_DOWN    1      // clrCrimson
-#define COLOR_RANGE   2      // clrDarkGray
+#define COLOR_UP    0  // clrDodgerBlue
+#define COLOR_DOWN  1  // clrCrimson
+#define COLOR_RANGE 2  // clrDarkGray
 
 //--- 入力パラメータ
 input group "=== マルチタイムフレーム (MTF) 設定 ==="
-input ENUM_TIMEFRAMES InpTimeframe            = PERIOD_CURRENT; // 計算対象タイムフレーム (上位足を指定可能)
-input bool            InpAutoTimeframeScale   = true;           // 時間足に応じたノイズ自動スケーリング (Δt補正)
+input ENUM_TIMEFRAMES InpTimeframe          = PERIOD_CURRENT; // 計算対象タイムフレーム (上位足を指定可能)
+input bool            InpAutoTimeframeScale = true;           // 手動モード時の時間足スケーリング (Δt補正)
 
-input group "=== 解析的自律キャリブレーション (Closed-Form Analytical) ==="
-input bool            InpAutoCalibration      = true;           // 実測データに基づく客観自動キャリブレーション (推奨)
-input double          InpTargetLagBars        = 10.0;           // 抽出したいトレンドの実効時定数 (目安バー数: 8〜15推奨)
-input int             InpCalibSamples         = 1000;           // 観測ノイズ計測に使用する過去バー数
+input group "=== 確定足動的キャリブレーション (完全因果的・先読みゼロ) ==="
+input bool   InpAutoCalibration = true;  // 確定足ローリングによる動的ノイズ推定 (推奨)
+input double InpTargetLagBars   = 10.0;  // 抽出したいトレンドの実効時定数 tau (目安: 8〜15本)
+input int    InpRollingWindow   = 200;   // ローリング観測窓長 W (過去確定足のみ使用: 100〜250推奨)
 
-input group "=== カルマンフィルター パラメータ (手動設定時またはフォールバック) ==="
-input double          InpManualQMu            = 0.0;            // プロセスノイズ分散 (水準: q_mu, 平滑トレンド時は0.0)
-input double          InpManualQBeta          = 1e-10;          // プロセスノイズ分散 (傾き: q_beta)
-input double          InpManualR              = 1e-06;          // 観測ノイズ分散 (R)
-input double          InpManualInitialP       = 1.0;            // 初期誤差共分散スケール (P0)
+input group "=== カルマンフィルター パラメータ (手動設定時または初期フォールバック) ==="
+input double InpManualQMu      = 0.0;    // プロセスノイズ分散 (水準: q_mu, 平滑トレンドモデル時は0.0)
+input double InpManualQBeta    = 1e-9;   // プロセスノイズ分散 (傾き: q_beta)
+input double InpManualR        = 1e-5;   // 観測ノイズ分散 (R)
+input double InpManualInitialP = 1.0;    // 初期誤差共分散スケール (P0)
 
 input group "=== レジーム判定 (ヒステリシス) パラメータ ==="
-input double          InpZEnter               = 2.0;            // トレンド突入閾値 (|z| >= z_enter)
-input double          InpZExit                = 1.0;            // トレンド離脱閾値 (|z| <= z_exit)
-input bool            InpAllowDirectReversal  = true;           // 急反転時の即時ドテン許可 (UP <-> DOWN 直行)
-input ENUM_APPLIED_PRICE InpAppliedPrice      = PRICE_CLOSE;   // 適用価格
+input double             InpZEnter              = 2.0;         // トレンド突入閾値 (|z| >= z_enter)
+input double             InpZExit               = 1.0;         // トレンド離脱閾値 (|z| <= z_exit)
+input bool               InpAllowDirectReversal = true;        // 急反転時の即時ドテン許可 (UP <-> DOWN 直行)
+input ENUM_APPLIED_PRICE InpAppliedPrice        = PRICE_CLOSE; // 適用価格
 
 //--- 各バーの状態を隔離保持する構造体（未確定足の状態汚染防止）
 struct KalmanState
 {
-   double mu;            // 平滑化対数価格水準 ln(P)
-   double beta;          // 局所的な対数傾き (1足あたりの期待リターン速度)
-   double p00;           // 共分散 P[0,0]
-   double p01;           // 共分散 P[0,1]
-   double p11;           // 共分散 P[1,1]
-   double regime;        // 現在のレジーム状態
-   bool   initialized;   // 初期化フラグ
+   double mu;          // 平滑化対数価格水準 ln(P)
+   double beta;        // 局所的な対数傾き (1足あたりの期待リターン速度)
+   double p00;         // 共分散 P[0,0]
+   double p01;         // 共分散 P[0,1]
+   double p11;         // 共分散 P[1,1]
+   double regime;      // 現在のレジーム状態
+   bool   initialized; // 初期化フラグ
 };
 
 //--- インジケーターバッファ
-double BufferZScore[];   // プロット用: Zスコア
-double BufferColor[];    // プロット用: カラーインデックス
-double BufferSlope[];    // 計算用/EA取得用: 局所的な傾き beta
-double BufferRegime[];   // 計算用/EA取得用: レジーム (+1: UP, -1: DOWN, 0: RANGE)
+double BufferZScore[]; // プロット用: Zスコア
+double BufferColor[];  // プロット用: カラーインデックス
+double BufferSlope[];  // 計算用/EA取得用: 局所的な傾き beta
+double BufferRegime[]; // 計算用/EA取得用: レジーム (+1: UP, -1: DOWN, 0: RANGE)
 
-// シングルタイムフレーム履歴配列
+//--- シングルタイムフレーム動的計算用配列
 KalmanState StateHistory[];
+double      LogPriceHistory[]; // 対数価格系列 y_t = ln(P_t)
+double      PrefixD2Sq[];      // 二階差分二乗の累積和配列 (真の O(1) スライディング計算用)
 
-// MTF専用グローバルキャッシュ (O(1) 増分処理用)
+// 確定足時点でのキャリブレーション結果キャッシュ (未確定足に固定適用する用: Path A)
+double g_current_r         = 1e-5;
+double g_current_q_beta    = 1e-9;
+double g_current_initial_p = 1.0;
+
+// MTF専用の確定足パラメータキャッシュ (Path B)
+double g_tf_cached_r         = 1e-5;
+double g_tf_cached_q_beta    = 1e-9;
+double g_tf_cached_initial_p = 1.0;
+
+//--- MTF専用グローバル配列 (O(1) 増分処理用)
 KalmanState g_tf_state_history[];
+double      g_tf_log_prices[];
+double      g_tf_prefix_d2_sq[];
 double      g_tf_zscore_cache[];
 double      g_tf_slope_cache[];
 double      g_tf_regime_cache[];
@@ -82,18 +96,19 @@ int         g_last_mapped_tf_idx  = 0;
 MqlRates    g_tf_rates[];
 
 // 直前有効価格の永続保持
-double      g_last_valid_price    = 0.0;
-double      g_tf_last_valid_price = 0.0;
+double g_last_valid_price    = 0.0;
+double g_tf_last_valid_price = 0.0;
 
-// 実効パラメータ
-double g_q_mu      = 0.0;
-double g_q_beta    = 1e-8;
-double g_r         = 1e-4;
-double g_initial_p = 1.0;
-ENUM_TIMEFRAMES g_calc_tf = PERIOD_CURRENT;
+// 実効基本パラメータ
+double          g_base_q_mu      = 0.0;
+double          g_base_q_beta    = 1e-9;
+double          g_base_r         = 1e-5;
+double          g_base_initial_p = 1.0;
+double          g_tau4           = 10000.0; // tau^4
+ENUM_TIMEFRAMES g_calc_tf        = PERIOD_CURRENT;
 
 //+------------------------------------------------------------------+
-//| 適用価格取得オーバーロード（配列版: Path A）                     |
+//| 適用価格取得オーバーロード（配列版: Path A）                    |
 //+------------------------------------------------------------------+
 double GetAppliedPrice(const ENUM_APPLIED_PRICE price_type,
                        const double &open[],
@@ -116,7 +131,7 @@ double GetAppliedPrice(const ENUM_APPLIED_PRICE price_type,
 }
 
 //+------------------------------------------------------------------+
-//| 適用価格取得オーバーロード（MqlRates構造体版: Path B）            |
+//| 適用価格取得オーバーロード（MqlRates構造体版: Path B）           |
 //+------------------------------------------------------------------+
 double GetAppliedPrice(const ENUM_APPLIED_PRICE price_type, const MqlRates &rate)
 {
@@ -131,73 +146,6 @@ double GetAppliedPrice(const ENUM_APPLIED_PRICE price_type, const MqlRates &rate
       case PRICE_WEIGHTED: return (rate.high + rate.low + 2.0 * rate.close) * 0.25;
       default:             return rate.close;
    }
-}
-
-//+------------------------------------------------------------------+
-//| 解析的自律キャリブレーション (Rice推定量 + 極配置解析解)          |
-//|  1. 観測ノイズ R: 2階差分分散推定量 (Rice's Estimator) で直接計測|
-//|  2. 傾きノイズ q_beta: ターゲット時定数 tau から解析解 q_b = R / tau^4|
-//+------------------------------------------------------------------+
-bool RunAnalyticalCalibration(const double &log_prices[],
-                              const int total,
-                              const double target_lag,
-                              double &out_q_mu,
-                              double &out_q_beta,
-                              double &out_r)
-{
-   if(total < 10 || target_lag < 1.0)
-      return(false);
-
-   uint start_time = GetTickCount();
-
-   // 1. ノイズ分散 R の計測: 二階差分分散推定量 (Rice's Estimator, Rice 1984)
-   //    トレンド成分 (低周波) を二階差分で消去し、純粋な高周波観測ノイズ分散を直接抽出
-   //    Var(Delta^2 y_t) = 6 * R
-   double sum_sq_diff2 = 0.0;
-   int diff_count = 0;
-
-   for(int t = 2; t < total; t++)
-   {
-      double d2 = log_prices[t] - 2.0 * log_prices[t - 1] + log_prices[t - 2];
-      sum_sq_diff2 += (d2 * d2);
-      diff_count++;
-   }
-
-   if(diff_count == 0)
-      return(false);
-
-   double estimated_r = sum_sq_diff2 / (6.0 * (double)diff_count);
-
-   // 安全下限・上限ガード
-   if(estimated_r < 1e-9) estimated_r = 1e-9;
-   if(estimated_r > 1.0)  estimated_r = 1.0;
-
-   // 2. 平滑トレンド制約: 水準ジャンプを禁止 (Integrated Random Walk)
-   out_q_mu = 0.0;
-
-   // 3. 傾きプロセスノイズ q_beta の閉じた解析解導出
-   //    平滑トレンドカルマンフィルター / HPフィルターの極配置関係式 (Harvey & Jaeger 1993):
-   //    lambda = R / q_beta = tau^4  ===>  q_beta = R / (tau^4)
-   double tau4 = MathPow(target_lag, 4.0);
-   out_q_beta = estimated_r / tau4;
-   out_r      = estimated_r;
-
-   double ratio = out_q_beta / out_r;
-   double effective_lag = MathPow(1.0 / ratio, 0.25);
-   uint elapsed = GetTickCount() - start_time;
-
-   Print("================================================================================");
-   PrintFormat("[★ 解析的自律キャリブレーション完了 ★ 所要時間: %d ms | サンプル: %d 本]", elapsed, total);
-   PrintFormat(" - モデル設計構造       : 平滑トレンドモデル (Smooth Trend Model: q_mu = 0 固定)");
-   PrintFormat(" - 推定 観測ノイズ分散       (R)      : %.3e (Rice二階差分推定量より実測)", out_r);
-   PrintFormat(" - 逆算 傾きプロセスノイズ   (q_beta) : %.3e (極配置解析解: R / tau^4)", out_q_beta);
-   PrintFormat(" - 設定 水準プロセスノイズ   (q_mu)   : 0.0 (固定制約)");
-   PrintFormat(" - 指定 ターゲット時定数     (tau)    : %.1f 本", target_lag);
-   PrintFormat(" - 設定 フィルタ時定数確認   (半値幅) : 約 %.1f 本 (代数整合確認)", effective_lag);
-   PrintFormat(" - 実効ノイズ比率            (q_b / R): %.3e", ratio);
-   Print("================================================================================");
-
-   return(true);
 }
 
 //+------------------------------------------------------------------+
@@ -217,96 +165,59 @@ int OnInit()
       return(INIT_PARAMETERS_INCORRECT);
    }
 
+   if(InpRollingWindow < 20)
+   {
+      Print("[Error] InpRollingWindow は 20 以上を指定してください。");
+      return(INIT_PARAMETERS_INCORRECT);
+   }
+
    g_calc_tf = (InpTimeframe == PERIOD_CURRENT) ? _Period : InpTimeframe;
+   g_tau4 = MathPow(InpTargetLagBars, 4.0);
 
-   // 解析的自律キャリブレーションの実行
-   if(InpAutoCalibration)
+   g_base_q_mu      = InpManualQMu;
+   g_base_q_beta    = InpManualQBeta;
+   g_base_r         = InpManualR;
+   g_base_initial_p = InpManualInitialP;
+
+   // 手動モード時の時間足スケーリング（Δt補正: Q, R, P0 の比率を完全維持）
+   if(!InpAutoCalibration && InpAutoTimeframeScale)
    {
-      PrintFormat("[*] %s (%s) の過去データを取得し、Rice推定量による解析的キャリブレーションを開始します...",
-                  _Symbol, EnumToString(g_calc_tf));
+      double scale = (double)PeriodSeconds(g_calc_tf) / 86400.0;
+      if(scale < 1e-4) scale = 1e-4;
 
-      MqlRates sample_rates[];
-      ArraySetAsSeries(sample_rates, false);
-      int copied = CopyRates(_Symbol, g_calc_tf, 0, InpCalibSamples, sample_rates);
-
-      if(copied > 30)
-      {
-         double calib_prices[];
-         ArrayResize(calib_prices, copied);
-         double last_valid = sample_rates[0].close;
-
-         for(int i = 0; i < copied; i++)
-         {
-            double raw = GetAppliedPrice(InpAppliedPrice, sample_rates[i]);
-            if(raw > 0.0)
-               last_valid = raw;
-            calib_prices[i] = MathLog(last_valid);
-         }
-
-         double est_q_mu, est_q_beta, est_r;
-         if(RunAnalyticalCalibration(calib_prices, copied, InpTargetLagBars, est_q_mu, est_q_beta, est_r))
-         {
-            g_q_mu      = est_q_mu;
-            g_q_beta    = est_q_beta;
-            g_r         = est_r;
-            g_initial_p = 1.0;
-         }
-         else
-         {
-            Print("[Warning] キャリブレーションに失敗したため、手動設定値を使用します。");
-            g_q_mu      = InpManualQMu;
-            g_q_beta    = InpManualQBeta;
-            g_r         = InpManualR;
-            g_initial_p = InpManualInitialP;
-         }
-      }
-      else
-      {
-         Print("[Warning] 十分なバー履歴が取得できなかったため、手動設定値を使用します。");
-         g_q_mu      = InpManualQMu;
-         g_q_beta    = InpManualQBeta;
-         g_r         = InpManualR;
-         g_initial_p = InpManualInitialP;
-      }
+      g_base_q_mu      *= scale;
+      g_base_q_beta    *= scale;
+      g_base_r         *= scale;
+      g_base_initial_p *= scale; // ★ P0 も同時にスケーリングしゲイン不変性を保証
    }
-   else
-   {
-      g_q_mu      = InpManualQMu;
-      g_q_beta    = InpManualQBeta;
-      g_r         = InpManualR;
-      g_initial_p = InpManualInitialP;
 
-      // 手動設定時の時間足スケーリング（Δt補正）
-      if(InpAutoTimeframeScale)
-      {
-         double scale = (double)PeriodSeconds(g_calc_tf) / 86400.0;
-         if(scale < 1e-4) scale = 1e-4;
+   // Path A 用キャッシュの初期化
+   g_current_r         = g_base_r;
+   g_current_q_beta    = g_base_q_beta;
+   g_current_initial_p = g_base_initial_p;
 
-         g_q_mu      *= scale;
-         g_q_beta    *= scale;
-         g_r         *= scale;
-         g_initial_p *= scale;
-      }
-   }
+   // Path B 用キャッシュの明示的初期化（対称性の確保）
+   g_tf_cached_r         = g_base_r;
+   g_tf_cached_q_beta    = g_base_q_beta;
+   g_tf_cached_initial_p = g_base_initial_p;
 
    // バッファバインド
    SetIndexBuffer(0, BufferZScore, INDICATOR_DATA);
-   SetIndexBuffer(1, BufferColor,  INDICATOR_COLOR_INDEX);
-   SetIndexBuffer(2, BufferSlope,  INDICATOR_CALCULATIONS);
+   SetIndexBuffer(1, BufferColor, INDICATOR_COLOR_INDEX);
+   SetIndexBuffer(2, BufferSlope, INDICATOR_CALCULATIONS);
    SetIndexBuffer(3, BufferRegime, INDICATOR_CALCULATIONS);
 
    IndicatorSetInteger(INDICATOR_DIGITS, 2);
 
-   string mode_str = InpAutoCalibration ? StringFormat("Auto(Lag:%.0f)", InpTargetLagBars) : "Manual";
-   string short_name = StringFormat("KalmanRegime(%s,%s,q_b:%.1e,Z:%.1f/%.1f)", 
-                                    EnumToString(g_calc_tf), mode_str, g_q_beta, InpZEnter, InpZExit);
+   string mode_str   = InpAutoCalibration ? StringFormat("RollingRice(W:%d,tau:%.1f)", InpRollingWindow, InpTargetLagBars) : "Manual";
+   string short_name = StringFormat("KalmanRegime(%s,%s,Z:%.1f/%.1f)", EnumToString(g_calc_tf), mode_str, InpZEnter, InpZExit);
    IndicatorSetString(INDICATOR_SHORTNAME, short_name);
 
    // 水平ライン設定
    IndicatorSetInteger(INDICATOR_LEVELS, 5);
-   IndicatorSetDouble(INDICATOR_LEVELVALUE, 0,  InpZEnter);
-   IndicatorSetDouble(INDICATOR_LEVELVALUE, 1,  InpZExit);
-   IndicatorSetDouble(INDICATOR_LEVELVALUE, 2,  0.0);
+   IndicatorSetDouble(INDICATOR_LEVELVALUE, 0, InpZEnter);
+   IndicatorSetDouble(INDICATOR_LEVELVALUE, 1, InpZExit);
+   IndicatorSetDouble(INDICATOR_LEVELVALUE, 2, 0.0);
    IndicatorSetDouble(INDICATOR_LEVELVALUE, 3, -InpZExit);
    IndicatorSetDouble(INDICATOR_LEVELVALUE, 4, -InpZEnter);
 
@@ -328,26 +239,40 @@ int OnInit()
    g_tf_last_valid_price = 0.0;
    ArrayFree(g_tf_rates);
 
+   Print("");
+   PrintFormat("[★ KalmanRegimeEstimator 起動完了 ★]");
+   PrintFormat("  - 動作モード             : %s", InpAutoCalibration ? "確定足ローリングRice推定量＆現在足リアルタイム追従" : "手動固定モード");
+   PrintFormat("  - 抽出ターゲット時定数   : %.1f 本 (極配置関係式: q_beta = R_t / tau^4)", InpTargetLagBars);
+   if(InpAutoCalibration)
+      PrintFormat("  - ローリング観測窓幅     : 過去確定 %d 本 (現在足の未確定ノイズによるパラメータ汚染を完全遮断)", InpRollingWindow);
+   else if(InpAutoTimeframeScale)
+      PrintFormat("  - 時間足スケーリング     : 有効 (scale=%.4f, Q, R, P0 を同率補正)", (double)PeriodSeconds(g_calc_tf) / 86400.0);
+   Print("");
+
    return(INIT_SUCCEEDED);
 }
 
 //+------------------------------------------------------------------+
-//| 1ステップのカルマン逐次更新（スカラー代数展開）                  |
+//| 1ステップのカルマン逐次更新（動的パラメータ対応スカラー展開）    |
 //+------------------------------------------------------------------+
-void UpdateKalmanStep(const KalmanState &prevState, 
-                      const double log_price, 
-                      KalmanState &outState, 
-                      double &outSlope, 
-                      double &outZScore, 
-                      double &outRegime)
+void UpdateKalmanStepDynamic(const KalmanState &prevState,
+                             const double log_price,
+                             const double current_q_mu,
+                             const double current_q_beta,
+                             const double current_r,
+                             const double initial_p,
+                             KalmanState &outState,
+                             double &outSlope,
+                             double &outZScore,
+                             double &outRegime)
 {
    if(!prevState.initialized)
    {
       outState.mu          = log_price;
       outState.beta        = 0.0;
-      outState.p00         = g_initial_p;
+      outState.p00         = initial_p; // ★ 正しくスケーリングされた初期共分散を使用
       outState.p01         = 0.0;
-      outState.p11         = g_initial_p;
+      outState.p11         = initial_p;
       outState.regime      = REGIME_RANGE;
       outState.initialized = true;
 
@@ -357,17 +282,17 @@ void UpdateKalmanStep(const KalmanState &prevState,
       return;
    }
 
-   // 1. 予測ステップ (平滑トレンドモデル: g_q_mu = 0.0)
+   // 1. 予測ステップ (平滑トレンドモデル: current_q_mu = 0.0)
    double mu_pred   = prevState.mu + prevState.beta;
    double beta_pred = prevState.beta;
 
-   double p00_pred = prevState.p00 + 2.0 * prevState.p01 + prevState.p11 + g_q_mu;
+   double p00_pred = prevState.p00 + 2.0 * prevState.p01 + prevState.p11 + current_q_mu;
    double p01_pred = prevState.p01 + prevState.p11;
-   double p11_pred = prevState.p11 + g_q_beta;
+   double p11_pred = prevState.p11 + current_q_beta;
 
    // 2. 更新ステップ
    double residual = log_price - mu_pred;
-   double s = p00_pred + g_r;
+   double s        = p00_pred + current_r;
    if(s <= 1e-15) s = 1e-15;
 
    double k0 = p00_pred / s;
@@ -411,7 +336,7 @@ void UpdateKalmanStep(const KalmanState &prevState,
    }
 
    outState.regime = current_regime;
-   outRegime = current_regime;
+   outRegime       = current_regime;
 }
 
 //+------------------------------------------------------------------+
@@ -428,8 +353,7 @@ int OnCalculate(const int rates_total,
                 const long &volume[],
                 const int &spread[])
 {
-   if(rates_total < 2)
-      return(0);
+   if(rates_total < 2) return(0);
 
    ArraySetAsSeries(time, false);
    ArraySetAsSeries(open, false);
@@ -448,7 +372,9 @@ int OnCalculate(const int rates_total,
    {
       if(ArraySize(StateHistory) != rates_total)
       {
-         if(ArrayResize(StateHistory, rates_total) < 0)
+         if(ArrayResize(StateHistory, rates_total) < 0 ||
+            ArrayResize(LogPriceHistory, rates_total) < 0 ||
+            ArrayResize(PrefixD2Sq, rates_total) < 0)
             return(0);
       }
 
@@ -459,10 +385,11 @@ int OnCalculate(const int rates_total,
       }
       else
       {
-         // InpAppliedPrice を厳密に反映して初期シード
          double p0 = GetAppliedPrice(InpAppliedPrice, open, high, low, close, 0);
          g_last_valid_price = (p0 > 0.0) ? p0 : close[0];
       }
+
+      int last_bar_idx = rates_total - 1;
 
       for(int i = start; i < rates_total && !IsStopped(); i++)
       {
@@ -471,18 +398,70 @@ int OnCalculate(const int rates_total,
             g_last_valid_price = raw_price;
 
          double log_price = MathLog(g_last_valid_price);
+         LogPriceHistory[i] = log_price;
+
+         double current_r      = g_base_r;
+         double current_q_beta = g_base_q_beta;
+         double current_q_mu   = 0.0;
+
+         // --- [キャリブレーション層の確定足隔離] ---
+         // 確定足（i < last_bar_idx）でのみ累積和 PrefixD2Sq を更新し、
+         // 最新の確定ノイズ分散 R_t をキャッシュする
+         if(i < last_bar_idx)
+         {
+            if(i >= 2)
+            {
+               double d2 = log_price - 2.0 * LogPriceHistory[i - 1] + LogPriceHistory[i - 2];
+               PrefixD2Sq[i] = PrefixD2Sq[i - 1] + (d2 * d2);
+            }
+            else
+            {
+               PrefixD2Sq[i] = 0.0;
+            }
+
+            if(InpAutoCalibration && i >= 2)
+            {
+               int start_k = (i >= InpRollingWindow + 1) ? (i - InpRollingWindow + 1) : 2;
+               int count   = i - start_k + 1;
+
+               if(count >= 10)
+               {
+                  double sum_d2_sq   = PrefixD2Sq[i] - PrefixD2Sq[start_k - 1];
+                  double estimated_r = sum_d2_sq / (6.0 * (double)count);
+
+                  if(estimated_r < 1e-9) estimated_r = 1e-9;
+                  if(estimated_r > 1.0)  estimated_r = 1.0;
+
+                  current_r      = estimated_r;
+                  current_q_beta = current_r / g_tau4;
+               }
+            }
+            g_current_r      = current_r;
+            g_current_q_beta = current_q_beta;
+         }
+         else
+         {
+            // 現在バー（未確定足: i == last_bar_idx）:
+            // リアルタイムティックでキャリブレーション配列を汚染させず、
+            // 直前確定足で得られた安定した最新パラメータをそのまま固定適用する
+            current_r      = g_current_r;
+            current_q_beta = g_current_q_beta;
+         }
+
+         // --- [カルマンフィルター状態更新層（リアルタイム）] ---
+         // 現在バーの最新価格 log_price を用いて毎ティック即座に応答計算
          double slope = 0.0, zScore = 0.0, regime = REGIME_RANGE;
 
          if(i == 0)
          {
             KalmanState emptyState;
             emptyState.initialized = false;
-            emptyState.regime = REGIME_RANGE;
-            UpdateKalmanStep(emptyState, log_price, StateHistory[i], slope, zScore, regime);
+            emptyState.regime      = REGIME_RANGE;
+            UpdateKalmanStepDynamic(emptyState, log_price, current_q_mu, current_q_beta, current_r, g_current_initial_p, StateHistory[i], slope, zScore, regime);
          }
          else
          {
-            UpdateKalmanStep(StateHistory[i - 1], log_price, StateHistory[i], slope, zScore, regime);
+            UpdateKalmanStepDynamic(StateHistory[i - 1], log_price, current_q_mu, current_q_beta, current_r, g_current_initial_p, StateHistory[i], slope, zScore, regime);
          }
 
          BufferZScore[i] = zScore;
@@ -494,7 +473,7 @@ int OnCalculate(const int rates_total,
    }
 
    // =================================================================
-   // パス B: マルチタイムフレーム (上位足キャッシュ & 増分 O(1) 処理)
+   // パス B: マルチタイムフレーム (上位足キャッシュ & 確定足キャリブレーション)
    // =================================================================
    bool need_full_fetch = (g_tf_prev_rates_total == 0 || ArraySize(g_tf_rates) == 0);
 
@@ -547,32 +526,33 @@ int OnCalculate(const int rates_total,
    {
       ArraySetAsSeries(g_tf_rates, false);
       int copied = CopyRates(_Symbol, g_calc_tf, time[0], TimeCurrent(), g_tf_rates);
-      if(copied <= 1)
-         return(prev_calculated);
+      if(copied <= 1) return(prev_calculated);
 
       g_tf_prev_rates_total = 0;
       g_last_mapped_tf_idx  = 0;
-      // InpAppliedPrice を厳密に反映して初期シード
       double p0 = GetAppliedPrice(InpAppliedPrice, g_tf_rates[0]);
       g_tf_last_valid_price = (p0 > 0.0) ? p0 : g_tf_rates[0].close;
    }
 
    int tf_rates_total = ArraySize(g_tf_rates);
-   if(tf_rates_total < 2)
-      return(prev_calculated);
+   if(tf_rates_total < 2) return(prev_calculated);
 
    if(ArraySize(g_tf_state_history) != tf_rates_total)
    {
       ArrayResize(g_tf_state_history, tf_rates_total);
-      ArrayResize(g_tf_zscore_cache,   tf_rates_total);
-      ArrayResize(g_tf_slope_cache,    tf_rates_total);
-      ArrayResize(g_tf_regime_cache,   tf_rates_total);
-      ArrayResize(g_tf_time_cache,     tf_rates_total);
+      ArrayResize(g_tf_log_prices, tf_rates_total);
+      ArrayResize(g_tf_prefix_d2_sq, tf_rates_total);
+      ArrayResize(g_tf_zscore_cache, tf_rates_total);
+      ArrayResize(g_tf_slope_cache, tf_rates_total);
+      ArrayResize(g_tf_regime_cache, tf_rates_total);
+      ArrayResize(g_tf_time_cache, tf_rates_total);
    }
 
    int tf_start = 0;
    if(g_tf_prev_rates_total > 0 && tf_rates_total >= g_tf_prev_rates_total)
       tf_start = g_tf_prev_rates_total - 1;
+
+   int last_tf_idx = tf_rates_total - 1;
 
    for(int k = tf_start; k < tf_rates_total && !IsStopped(); k++)
    {
@@ -581,18 +561,64 @@ int OnCalculate(const int rates_total,
          g_tf_last_valid_price = raw_price;
 
       double log_price = MathLog(g_tf_last_valid_price);
+      g_tf_log_prices[k] = log_price;
+
+      double current_r      = g_base_r;
+      double current_q_beta = g_base_q_beta;
+      double current_q_mu   = 0.0;
+
+      // 上位足確定バーのみでキャリブレーション累積和を更新
+      if(k < last_tf_idx)
+      {
+         if(k >= 2)
+         {
+            double d2 = log_price - 2.0 * g_tf_log_prices[k - 1] + g_tf_log_prices[k - 2];
+            g_tf_prefix_d2_sq[k] = g_tf_prefix_d2_sq[k - 1] + (d2 * d2);
+         }
+         else
+         {
+            g_tf_prefix_d2_sq[k] = 0.0;
+         }
+
+         if(InpAutoCalibration && k >= 2)
+         {
+            int start_k = (k >= InpRollingWindow + 1) ? (k - InpRollingWindow + 1) : 2;
+            int count   = k - start_k + 1;
+
+            if(count >= 10)
+            {
+               double sum_d2_sq   = g_tf_prefix_d2_sq[k] - g_tf_prefix_d2_sq[start_k - 1];
+               double estimated_r = sum_d2_sq / (6.0 * (double)count);
+
+               if(estimated_r < 1e-9) estimated_r = 1e-9;
+               if(estimated_r > 1.0)  estimated_r = 1.0;
+
+               current_r      = estimated_r;
+               current_q_beta = current_r / g_tau4;
+            }
+         }
+         g_tf_cached_r      = current_r;
+         g_tf_cached_q_beta = current_q_beta;
+      }
+      else
+      {
+         // 上位足の未確定バーでは確定パラメータを固定適用
+         current_r      = g_tf_cached_r;
+         current_q_beta = g_tf_cached_q_beta;
+      }
+
       double slope = 0.0, zScore = 0.0, regime = REGIME_RANGE;
 
       if(k == 0)
       {
          KalmanState emptyState;
          emptyState.initialized = false;
-         emptyState.regime = REGIME_RANGE;
-         UpdateKalmanStep(emptyState, log_price, g_tf_state_history[k], slope, zScore, regime);
+         emptyState.regime      = REGIME_RANGE;
+         UpdateKalmanStepDynamic(emptyState, log_price, current_q_mu, current_q_beta, current_r, g_tf_cached_initial_p, g_tf_state_history[k], slope, zScore, regime);
       }
       else
       {
-         UpdateKalmanStep(g_tf_state_history[k - 1], log_price, g_tf_state_history[k], slope, zScore, regime);
+         UpdateKalmanStepDynamic(g_tf_state_history[k - 1], log_price, current_q_mu, current_q_beta, current_r, g_tf_cached_initial_p, g_tf_state_history[k], slope, zScore, regime);
       }
 
       g_tf_zscore_cache[k] = zScore;

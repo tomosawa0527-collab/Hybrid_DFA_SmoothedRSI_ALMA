@@ -63,7 +63,7 @@ input ENUM_KALMAN_TF_MODE  InpKalmanTfMode            = KALMAN_TF_NEXT_HIGHER; /
 input ENUM_TIMEFRAMES      InpKalmanCustomTF          = PERIOD_H4;             // [手動指定時] カルマンタイムフレーム
 
 input group "=== カルマンレジーム推定器設定 ==="
-input bool                 InpKalmanAutoCalib         = false;                 // カルマン自動キャリブレーション (false: 固定値推奨, true: 動的計測)
+input bool                 InpKalmanAutoCalib         = true;                  // カルマン自動キャリブレーション (false: 固定値, true: 動的計測_Rice推定版なので推奨)
 input double               InpTargetLagBars           = 10.0;                  // カルマン時定数 (tau: Auto時のみ有効)
 input string               InpKalmanQBeta             = "1.137e-10";           // 傾きプロセスノイズ q_beta (手動設定用, 例: 1.137e-10)
 input string               InpKalmanR                 = "1.137e-06";           // 観測ノイズ分散 R (手動設定用, 例: 1.137e-06)
