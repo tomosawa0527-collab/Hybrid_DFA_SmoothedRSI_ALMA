@@ -50,8 +50,8 @@ input double InpRsiOversold = 35.0;                                         // R
 input group "=== トレンド戦略 (Dual MA Cross) ==="
 input bool InpUseTrendStrategy = true;                                      // トレンド戦略 (Dual MA Cross) を有効化
 input ENUM_TREND_MA_TYPE InpTrendMaType = TREND_MA_LWMA;                    // 移動平均タイプ (SMA/EMA/SMMA/LWMA/ALMA)
-input int InpMaFastWindow = 20;                                             // 短期 MA 期間 / 窓幅 (Fast Window)
-input int InpMaSlowWindow = 40;                                             // 長期 MA 期間 / 窓幅 (Slow Window)
+input ENUM_MA_PERIOD InpMaFastWindow = MA_PERIOD_20;                        // 短期 MA 期間 / 窓幅 (Fast Window)
+input ENUM_MA_PERIOD InpMaSlowWindow = MA_PERIOD_40;                        // 長期 MA 期間 / 窓幅 (Slow Window)
 input ENUM_APPLIED_PRICE InpMaAppliedPrice = PRICE_CLOSE;                   // 適用価格
 
 //--- ALMA専用パラメータ (InpTrendMaType == TREND_MA_ALMA 時に有効)

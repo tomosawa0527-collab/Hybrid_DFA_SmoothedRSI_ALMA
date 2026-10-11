@@ -71,9 +71,9 @@ input double               InpZEnter                  = 2.0;                   /
 input double               InpZExit                   = 1.0;                   // レジーム離脱閾値
 
 input group "=== 移動平均線 & オシレーター設定 ==="
-input int             InpFastMAPeriod            = 8;              // 短期LWMA期間
-input int             InpMidMAPeriod             = 21;             // 中期EMA期間
-input int             InpSlowMAPeriod            = 89;             // 長期SMA期間
+input ENUM_MA_PERIOD  InpFastMAPeriod            = MA_PERIOD_8;    // 短期LWMA期間
+input ENUM_MA_PERIOD  InpMidMAPeriod             = MA_PERIOD_21;   // 中期EMA期間
+input ENUM_MA_PERIOD  InpSlowMAPeriod            = MA_PERIOD_89;   // 長期SMA期間
 input int             InpATRPeriod               = 14;             // 基準ATR期間
 input double          InpATRRatioThreshold       = 1.5;            // ATR Ratio 上限 (盾)
 input int             InpMaxArmedBars            = 10;             // 待機有効足数 (バー)

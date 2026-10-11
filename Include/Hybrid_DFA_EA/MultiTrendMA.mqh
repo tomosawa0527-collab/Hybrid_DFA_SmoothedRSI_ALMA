@@ -26,6 +26,38 @@ enum ENUM_TREND_MA_TYPE
 #endif
 
 //+------------------------------------------------------------------+
+//| 移動平均 期間定義 (Enum: カーブフィッティング防止)                |
+//+------------------------------------------------------------------+
+#ifndef _ENUM_MA_PERIOD_DEFINED_
+#define _ENUM_MA_PERIOD_DEFINED_
+enum ENUM_MA_PERIOD
+{
+   MA_PERIOD_DISABLED =   0, // 0 (無効)
+   MA_PERIOD_5        =   5, // 5
+   MA_PERIOD_8        =   8, // 8
+   MA_PERIOD_10       =  10, // 10
+   MA_PERIOD_13       =  13, // 13
+   MA_PERIOD_15       =  15, // 15
+   MA_PERIOD_20       =  20, // 20
+   MA_PERIOD_21       =  21, // 21
+   MA_PERIOD_25       =  25, // 25
+   MA_PERIOD_26       =  26, // 26
+   MA_PERIOD_34       =  34, // 34
+   MA_PERIOD_40       =  40, // 40
+   MA_PERIOD_50       =  50, // 50
+   MA_PERIOD_52       =  52, // 52
+   MA_PERIOD_55       =  55, // 55
+   MA_PERIOD_60       =  60, // 60
+   MA_PERIOD_75       =  75, // 75
+   MA_PERIOD_89       =  89, // 89
+   MA_PERIOD_100      = 100, // 100
+   MA_PERIOD_150      = 150, // 150
+   MA_PERIOD_200      = 200  // 200
+};
+#define ENUM_PERIOD ENUM_MA_PERIOD
+#endif
+
+//+------------------------------------------------------------------+
 //| シグナル状態定義定数 (インジケーター出力値: double)              |
 //+------------------------------------------------------------------+
 #define MULTI_TREND_MA_SIGNAL_BULLISH     1.0   // 強気 / 上昇シグナル (+1.0)

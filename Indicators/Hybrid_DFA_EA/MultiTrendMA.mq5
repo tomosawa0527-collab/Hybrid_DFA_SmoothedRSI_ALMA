@@ -35,11 +35,11 @@
 //--- 入力パラメータ
 input group "=== 移動平均線 基本設定 ==="
 input ENUM_TREND_MA_TYPE InpFastMaType     = TREND_MA_LWMA; // [Fast] 移動平均タイプ
-input int                InpFastWindow     = 8;             // [Fast] 期間 (0で無効)
+input ENUM_MA_PERIOD     InpFastWindow     = MA_PERIOD_8;   // [Fast] 期間 (0で無効)
 input ENUM_TREND_MA_TYPE InpMidMaType      = TREND_MA_EMA;  // [Mid] 移動平均タイプ
-input int                InpMidWindow      = 21;            // [Mid] 期間 (0で無効)
+input ENUM_MA_PERIOD     InpMidWindow      = MA_PERIOD_21;  // [Mid] 期間 (0で無効)
 input ENUM_TREND_MA_TYPE InpSlowMaType     = TREND_MA_SMA;  // [Slow] 移動平均タイプ
-input int                InpSlowWindow     = 89;            // [Slow] 期間 (0で無効)
+input ENUM_MA_PERIOD     InpSlowWindow     = MA_PERIOD_89;  // [Slow] 期間 (0で無効)
 input ENUM_APPLIED_PRICE InpAppliedPrice   = PRICE_CLOSE;   // 適用価格
 
 input group "=== ALMA 専用パラメータ ==="
