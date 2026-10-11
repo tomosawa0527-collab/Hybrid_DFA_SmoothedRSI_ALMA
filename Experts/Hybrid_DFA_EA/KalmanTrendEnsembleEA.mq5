@@ -105,7 +105,7 @@ int h_atr14        = INVALID_HANDLE;
 int h_rsi14        = INVALID_HANDLE;
 
 // 実行制御変数
-datetime g_last_d1_bar_time = 0;
+datetime g_last_bar_time    = 0;
 int      g_cooldown_counter = 0;   // クールダウン残バー数
 bool     g_partial_closed   = false; // 部分利確済みフラグ
 
@@ -157,7 +157,11 @@ int CreateMultiTrendMaHandle(const ENUM_TIMEFRAMES tf,
 
    for(int i = 0; i < 4; i++)
    {
-      int h = iCustom(_Symbol, tf, candidates[i],
+      // チャート足(_Period)でバインドし、MTF設定としてtf(_Period等)を渡す
+      int h = iCustom(_Symbol, _Period, candidates[i],
+                      // === マルチタイムフレーム (MTF) 設定 ===
+                      "=== マルチタイムフレーム (MTF) 設定 ===",
+                      tf,
                       // === 移動平均線 基本設定 ===
                       "=== 移動平均線 基本設定 ===",
                       ma_type,            // InpFastMaType
@@ -182,7 +186,7 @@ int OnInit()
    g_trade.SetDeviationInPoints(InpSlippage);
    g_trade.SetTypeFilling(DetectFillType(_Symbol));
 
-   // 1. カルマンレジーム推定インジケーターの接続試行
+   // 1. カルマンレジーム推定インジケーターの接続試行 (InpKalmanTF 指定足)
    string resolved_path = InpIndicatorPath;
    if(resolved_path == "KalmanRegimeEstimator" || resolved_path == "")
       resolved_path = DEFAULT_KALMAN_INDICATOR_PATH;
@@ -217,10 +221,10 @@ int OnInit()
       return(INIT_FAILED);
    }
 
-   // 2. MultiTrendMA アンサンブル (3ペア) のハンドル生成 (日足 D1)
-   h_multi_short = CreateMultiTrendMaHandle(PERIOD_D1, InpEnsembleMaType, InpLwmaShortFast, InpLwmaShortSlow);
-   h_multi_mid   = CreateMultiTrendMaHandle(PERIOD_D1, InpEnsembleMaType, InpLwmaMidFast,   InpLwmaMidSlow);
-   h_multi_long  = CreateMultiTrendMaHandle(PERIOD_D1, InpEnsembleMaType, InpLwmaLongFast,  InpLwmaLongSlow);
+   // 2. MultiTrendMA アンサンブル (3ペア) のハンドル生成 (カレント足 _Period 連動)
+   h_multi_short = CreateMultiTrendMaHandle(_Period, InpEnsembleMaType, InpLwmaShortFast, InpLwmaShortSlow);
+   h_multi_mid   = CreateMultiTrendMaHandle(_Period, InpEnsembleMaType, InpLwmaMidFast,   InpLwmaMidSlow);
+   h_multi_long  = CreateMultiTrendMaHandle(_Period, InpEnsembleMaType, InpLwmaLongFast,  InpLwmaLongSlow);
 
    if(h_multi_short == INVALID_HANDLE || h_multi_mid == INVALID_HANDLE || h_multi_long == INVALID_HANDLE)
    {
@@ -228,9 +232,14 @@ int OnInit()
       return(INIT_FAILED);
    }
 
-   // 3. ATR(14) および RSI(14) のハンドル生成 (日足 D1)
-   h_atr14 = iATR(_Symbol, PERIOD_D1, InpAtrPeriod);
-   h_rsi14 = iRSI(_Symbol, PERIOD_D1, InpRsiPeriod, PRICE_CLOSE);
+   // チャート上にLWMAインジケーターを自動アタッチ (バックテスト完了後チャートおよびリアル運用で可視化)
+   ChartIndicatorAdd(0, 0, h_multi_short);
+   ChartIndicatorAdd(0, 0, h_multi_mid);
+   ChartIndicatorAdd(0, 0, h_multi_long);
+
+   // 3. ATR(14) および RSI(14) のハンドル生成 (カレント足 _Period 連動)
+   h_atr14 = iATR(_Symbol, _Period, InpAtrPeriod);
+   h_rsi14 = iRSI(_Symbol, _Period, InpRsiPeriod, PRICE_CLOSE);
 
    if(h_atr14 == INVALID_HANDLE || h_rsi14 == INVALID_HANDLE)
    {
@@ -238,12 +247,12 @@ int OnInit()
       return(INIT_FAILED);
    }
 
-   g_last_d1_bar_time = 0;
+   g_last_bar_time    = 0;
    g_cooldown_counter = 0;
    g_partial_closed   = false;
 
-   PrintFormat("[+] KalmanTrendEnsembleEA 初期化成功 | Symbol: %s | Magic: %d | Risk: %.1f%%",
-               _Symbol, InpMagicNumber, InpRiskPercent);
+   PrintFormat("[+] KalmanTrendEnsembleEA 初期化成功 | Symbol: %s | 執行足: %s | カルマン足: %s | Magic: %d | Risk: %.1f%%",
+               _Symbol, EnumToString(_Period), EnumToString(InpKalmanTF), InpMagicNumber, InpRiskPercent);
 
    return(INIT_SUCCEEDED);
 }
@@ -328,7 +337,7 @@ bool GetShift1IndicatorData(double &kalman_regime,
    atr14 = buf_atr[0];
    rsi14 = buf_rsi[0];
 
-   close1 = iClose(_Symbol, PERIOD_D1, 1);
+   close1 = iClose(_Symbol, _Period, 1);
    if(close1 <= 0.0) return false;
 
    return true;
@@ -358,10 +367,10 @@ void OnTick()
       return;
    }
 
-   // 3. 日足確定判定 (日足新バー形成時に1度のみ執行: 仕様書第10.1章)
-   datetime cur_d1_time = iTime(_Symbol, PERIOD_D1, 0);
-   if(cur_d1_time == g_last_d1_bar_time)
-      return; // 同一バー内では新規判定・日次更新をスキップ
+   // 3. 新バー確定判定 (カレント足新バー形成時に1度のみ執行)
+   datetime cur_bar_time = iTime(_Symbol, _Period, 0);
+   if(cur_bar_time == g_last_bar_time)
+      return; // 同一バー内では新規判定・更新をスキップ
 
    // クールダウンカウンターの更新 (新バー確定時に1減算)
    if(g_cooldown_counter > 0)
@@ -382,9 +391,9 @@ void OnTick()
       return;
    }
 
-   // スイングハイ・ローの計算 (過去20本・当日除外: 仕様書第3.5章)
-   double swing_low  = GetSwingLow(_Symbol, PERIOD_D1, InpSwingPeriod, 1);
-   double swing_high = GetSwingHigh(_Symbol, PERIOD_D1, InpSwingPeriod, 1);
+   // スイングハイ・ローの計算 (過去20本・前足除外: Shift 1 起点)
+   double swing_low  = GetSwingLow(_Symbol, _Period, InpSwingPeriod, 1);
+   double swing_high = GetSwingHigh(_Symbol, _Period, InpSwingPeriod, 1);
    if(swing_low <= 0.0 || swing_high <= 0.0) return;
 
    // 現在の保有ポジション確認
@@ -448,7 +457,7 @@ void OnTick()
                            exit_reason, pos_ticket, close1);
                g_cooldown_counter = InpCooldownBars;
                g_partial_closed   = false;
-               g_last_d1_bar_time = cur_d1_time;
+               g_last_bar_time = cur_bar_time;
                return;
             }
          }
@@ -523,7 +532,7 @@ void OnTick()
                            exit_reason, pos_ticket, close1);
                g_cooldown_counter = InpCooldownBars;
                g_partial_closed   = false;
-               g_last_d1_bar_time = cur_d1_time;
+               g_last_bar_time = cur_bar_time;
                return;
             }
          }
@@ -568,7 +577,7 @@ void OnTick()
          }
       }
 
-      g_last_d1_bar_time = cur_d1_time;
+      g_last_bar_time = cur_bar_time;
       return;
    }
 
@@ -579,7 +588,7 @@ void OnTick()
    // クールダウン中は新規エントリーを拒絶 (仕様書第11章)
    if(g_cooldown_counter > 0)
    {
-      g_last_d1_bar_time = cur_d1_time;
+      g_last_bar_time = cur_bar_time;
       return;
    }
 
@@ -588,7 +597,7 @@ void OnTick()
    {
       PrintFormat("[Gate] 新規発注停止: 証拠金維持率不足 (%.1f%% < %.1f%%)",
                   GetAccountMarginLevel(), InpMarginLevelStopNew);
-      g_last_d1_bar_time = cur_d1_time;
+      g_last_bar_time = cur_bar_time;
       return;
    }
 
@@ -597,7 +606,7 @@ void OnTick()
    {
       PrintFormat("[Gate] 新規発注停止: 実効レバレッジ上限到達 (%.2f >= %.2f)",
                   CalculateEffectiveLeverage(InpMagicNumber), InpMaxEffectiveLeverage);
-      g_last_d1_bar_time = cur_d1_time;
+      g_last_bar_time = cur_bar_time;
       return;
    }
 
@@ -742,6 +751,7 @@ void OnTick()
       }
    }
 
-   g_last_d1_bar_time = cur_d1_time;
+   g_last_bar_time = cur_bar_time;
 }
 //+------------------------------------------------------------------+
+

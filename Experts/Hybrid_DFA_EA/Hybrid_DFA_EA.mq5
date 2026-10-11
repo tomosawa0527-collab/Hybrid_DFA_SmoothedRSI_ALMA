@@ -209,6 +209,8 @@ int OnInit() {
 
         h_multiDualMa =
             iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\MultiTrendMA",
+                    "=== マルチタイムフレーム (MTF) 設定 ===",
+                    PERIOD_CURRENT,
                     "=== 移動平均線 基本設定 ===",
                     InpTrendMaType, InpMaFastWindow,
                     InpTrendMaType, 0, // Midは無効
@@ -225,6 +227,8 @@ int OnInit() {
         if (h_multiDualMa == INVALID_HANDLE) {
             h_multiDualMa =
                 iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\MultiTrendMA",
+                        "=== マルチタイムフレーム (MTF) 設定 ===",
+                        PERIOD_CURRENT,
                         "=== 移動平均線 基本設定 ===",
                         InpTrendMaType, InpMaFastWindow,
                         InpTrendMaType, 0, // Midは無効

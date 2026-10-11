@@ -294,10 +294,15 @@ int CreateMultiTrendMaHandle()
    candidates[2] = "Hybrid_DFA_EA/MultiTrendMA";
    candidates[3] = "MultiTrendMA";
 
+   ENUM_TIMEFRAMES exec_tf = (InpSystemTF == PERIOD_CURRENT) ? _Period : InpSystemTF;
+
    for(int i = 0; i < 4; i++)
    {
-      // チャート足(_Period)でバインドし、Fast/Mid/SlowのMAタイプ・期間を指定
+      // チャート足(_Period)でバインドし、MTF設定およびFast/Mid/SlowのMAタイプ・期間を指定
       int h = iCustom(_Symbol, _Period, candidates[i],
+                      // === マルチタイムフレーム (MTF) 設定 ===
+                      "=== マルチタイムフレーム (MTF) 設定 ===",
+                      exec_tf,
                       // === 移動平均線 基本設定 ===
                       "=== 移動平均線 基本設定 ===",
                       TREND_MA_LWMA,   // InpFastMaType: LWMA
@@ -356,6 +361,9 @@ int OnInit()
       Print("[Fatal Error] MultiTrendMA のロードに失敗しました。");
       return(INIT_FAILED);
    }
+
+   // チャート上にLWMA/EMA/SMAインジケーターを自動アタッチ (バックテスト完了後チャートおよびリアル運用で可視化)
+   ChartIndicatorAdd(0, 0, g_multi_ma_handle);
 
    g_atr_handle      = iATR(_Symbol, InpSystemTF, InpATRPeriod);
    g_atr_fast_handle = iATR(_Symbol, InpSystemTF, 5);
