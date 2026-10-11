@@ -42,6 +42,7 @@ enum ENUM_MA_PERIOD
    MA_PERIOD_21       =  21, // 21
    MA_PERIOD_25       =  25, // 25
    MA_PERIOD_26       =  26, // 26
+   MA_PERIOD_30       =  30, // 30
    MA_PERIOD_34       =  34, // 34
    MA_PERIOD_40       =  40, // 40
    MA_PERIOD_50       =  50, // 50
@@ -51,6 +52,7 @@ enum ENUM_MA_PERIOD
    MA_PERIOD_75       =  75, // 75
    MA_PERIOD_89       =  89, // 89
    MA_PERIOD_100      = 100, // 100
+   MA_PERIOD_120      = 120, // 120
    MA_PERIOD_150      = 150, // 150
    MA_PERIOD_200      = 200  // 200
 };

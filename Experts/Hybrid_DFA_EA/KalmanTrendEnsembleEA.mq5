@@ -14,6 +14,10 @@
 #property tester_indicator "Hybrid_DFA_EA/KalmanRegimeEstimator.ex5"
 #property tester_indicator "KalmanRegimeEstimator.ex5"
 #property tester_indicator "Indicators\\Hybrid_DFA_EA\\KalmanRegimeEstimator.ex5"
+#property tester_indicator "Hybrid_DFA_EA\\MultiTrendMA.ex5"
+#property tester_indicator "Hybrid_DFA_EA/MultiTrendMA.ex5"
+#property tester_indicator "MultiTrendMA.ex5"
+#property tester_indicator "Indicators\\Hybrid_DFA_EA\\MultiTrendMA.ex5"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -51,13 +55,14 @@ input double            InpIndZExit             = 1.0;            // トレン�
 input bool              InpIndAllowDirectReversal= true;          // 急反転時の即時ドテン許可
 input ENUM_APPLIED_PRICE InpIndAppliedPrice     = PRICE_CLOSE;   // 適用価格
 
-input group "=== LWMA アンサンブル設定 (仕様書第3.2章) ==="
-input int               InpLwmaShortFast        = 10;             // 短期ペア Fast (LWMA 10)
-input int               InpLwmaShortSlow        = 30;             // 短期ペア Slow (LWMA 30)
-input int               InpLwmaMidFast          = 20;             // 中期ペア Fast (LWMA 20: 部分利確基準線)
-input int               InpLwmaMidSlow          = 60;             // 中期ペア Slow (LWMA 60: ブレイク/ストップ基準線)
-input int               InpLwmaLongFast         = 40;             // 長期ペア Fast (LWMA 40)
-input int               InpLwmaLongSlow         = 120;            // 長期ペア Slow (LWMA 120)
+input group "=== MA アンサンブル設定 (MultiTrendMA 仕様書第3.2章) ==="
+input ENUM_TREND_MA_TYPE InpEnsembleMaType      = TREND_MA_LWMA;  // 移動平均タイプ (SMA/EMA/SMMA/LWMA/ALMA)
+input ENUM_MA_PERIOD    InpLwmaShortFast        = MA_PERIOD_10;   // 短期ペア Fast (LWMA 10)
+input ENUM_MA_PERIOD    InpLwmaShortSlow        = MA_PERIOD_30;   // 短期ペア Slow (LWMA 30)
+input ENUM_MA_PERIOD    InpLwmaMidFast          = MA_PERIOD_20;   // 中期ペア Fast (LWMA 20: 部分利確基準線)
+input ENUM_MA_PERIOD    InpLwmaMidSlow          = MA_PERIOD_60;   // 中期ペア Slow (LWMA 60: ブレイク/ストップ基準線)
+input ENUM_MA_PERIOD    InpLwmaLongFast         = MA_PERIOD_40;   // 長期ペア Fast (LWMA 40)
+input ENUM_MA_PERIOD    InpLwmaLongSlow         = MA_PERIOD_120;  // 長期ペア Slow (LWMA 120)
 input double            InpEnsembleThreshold    = 0.67;           // アンサンブル合致度閾値 (3組中2組以上 = 0.67)
 
 input group "=== ATR & ブレイクアウトバンド設定 (仕様書第3.3章) ==="
@@ -92,15 +97,12 @@ CTrade         g_trade;
 CPositionInfo  g_position;
 
 // インジケーターハンドル
-int h_kalman  = INVALID_HANDLE;
-int h_lwma10  = INVALID_HANDLE;
-int h_lwma30  = INVALID_HANDLE;
-int h_lwma20  = INVALID_HANDLE;
-int h_lwma60  = INVALID_HANDLE;
-int h_lwma40  = INVALID_HANDLE;
-int h_lwma120 = INVALID_HANDLE;
-int h_atr14   = INVALID_HANDLE;
-int h_rsi14   = INVALID_HANDLE;
+int h_kalman       = INVALID_HANDLE;
+int h_multi_short  = INVALID_HANDLE;
+int h_multi_mid    = INVALID_HANDLE;
+int h_multi_long   = INVALID_HANDLE;
+int h_atr14        = INVALID_HANDLE;
+int h_rsi14        = INVALID_HANDLE;
 
 // 実行制御変数
 datetime g_last_d1_bar_time = 0;
@@ -137,6 +139,38 @@ int CreateKalmanIndicatorHandle(const string indicator_path)
                   InpIndZExit,
                   InpIndAllowDirectReversal,
                   InpIndAppliedPrice);
+}
+
+//+------------------------------------------------------------------+
+//| MultiTrendMA インジケーターハンドル生成ヘルパー                  |
+//+------------------------------------------------------------------+
+int CreateMultiTrendMaHandle(const ENUM_TIMEFRAMES tf,
+                            const ENUM_TREND_MA_TYPE ma_type,
+                            const ENUM_MA_PERIOD fast_win,
+                            const ENUM_MA_PERIOD slow_win)
+{
+   string candidates[4];
+   candidates[0] = "Hybrid_DFA_EA\\MultiTrendMA";
+   candidates[1] = "Indicators\\Hybrid_DFA_EA\\MultiTrendMA";
+   candidates[2] = "Hybrid_DFA_EA/MultiTrendMA";
+   candidates[3] = "MultiTrendMA";
+
+   for(int i = 0; i < 4; i++)
+   {
+      int h = iCustom(_Symbol, tf, candidates[i],
+                      // === 移動平均線 基本設定 ===
+                      "=== 移動平均線 基本設定 ===",
+                      ma_type,            // InpFastMaType
+                      fast_win,           // InpFastWindow
+                      ma_type,            // InpMidMaType
+                      MA_PERIOD_DISABLED, // InpMidWindow (Midは無効)
+                      ma_type,            // InpSlowMaType
+                      slow_win,           // InpSlowWindow
+                      PRICE_CLOSE);
+      if(h != INVALID_HANDLE)
+         return h;
+   }
+   return INVALID_HANDLE;
 }
 
 //+------------------------------------------------------------------+
@@ -183,19 +217,14 @@ int OnInit()
       return(INIT_FAILED);
    }
 
-   // 2. LWMA アンサンブル (6本) のハンドル生成 (日足 D1)
-   h_lwma10  = iMA(_Symbol, PERIOD_D1, InpLwmaShortFast, 0, MODE_LWMA, PRICE_CLOSE);
-   h_lwma30  = iMA(_Symbol, PERIOD_D1, InpLwmaShortSlow, 0, MODE_LWMA, PRICE_CLOSE);
-   h_lwma20  = iMA(_Symbol, PERIOD_D1, InpLwmaMidFast,   0, MODE_LWMA, PRICE_CLOSE);
-   h_lwma60  = iMA(_Symbol, PERIOD_D1, InpLwmaMidSlow,   0, MODE_LWMA, PRICE_CLOSE);
-   h_lwma40  = iMA(_Symbol, PERIOD_D1, InpLwmaLongFast,  0, MODE_LWMA, PRICE_CLOSE);
-   h_lwma120 = iMA(_Symbol, PERIOD_D1, InpLwmaLongSlow,  0, MODE_LWMA, PRICE_CLOSE);
+   // 2. MultiTrendMA アンサンブル (3ペア) のハンドル生成 (日足 D1)
+   h_multi_short = CreateMultiTrendMaHandle(PERIOD_D1, InpEnsembleMaType, InpLwmaShortFast, InpLwmaShortSlow);
+   h_multi_mid   = CreateMultiTrendMaHandle(PERIOD_D1, InpEnsembleMaType, InpLwmaMidFast,   InpLwmaMidSlow);
+   h_multi_long  = CreateMultiTrendMaHandle(PERIOD_D1, InpEnsembleMaType, InpLwmaLongFast,  InpLwmaLongSlow);
 
-   if(h_lwma10 == INVALID_HANDLE || h_lwma30 == INVALID_HANDLE ||
-      h_lwma20 == INVALID_HANDLE || h_lwma60 == INVALID_HANDLE ||
-      h_lwma40 == INVALID_HANDLE || h_lwma120 == INVALID_HANDLE)
+   if(h_multi_short == INVALID_HANDLE || h_multi_mid == INVALID_HANDLE || h_multi_long == INVALID_HANDLE)
    {
-      Print("[Error] LWMAインジケーターの初期化に失敗しました。");
+      Print("[Error] MultiTrendMA インジケーターの初期化に失敗しました。");
       return(INIT_FAILED);
    }
 
@@ -227,15 +256,12 @@ void OnDeinit(const int reason)
    // バックテスト時はインジケータハンドルを解放しない（テスト完了後のチャート上にインジケータ表示を残すため）
    if(!MQLInfoInteger(MQL_TESTER))
    {
-      if(h_kalman != INVALID_HANDLE)  IndicatorRelease(h_kalman);
-      if(h_lwma10 != INVALID_HANDLE)  IndicatorRelease(h_lwma10);
-      if(h_lwma30 != INVALID_HANDLE)  IndicatorRelease(h_lwma30);
-      if(h_lwma20 != INVALID_HANDLE)  IndicatorRelease(h_lwma20);
-      if(h_lwma60 != INVALID_HANDLE)  IndicatorRelease(h_lwma60);
-      if(h_lwma40 != INVALID_HANDLE)  IndicatorRelease(h_lwma40);
-      if(h_lwma120 != INVALID_HANDLE) IndicatorRelease(h_lwma120);
-      if(h_atr14 != INVALID_HANDLE)   IndicatorRelease(h_atr14);
-      if(h_rsi14 != INVALID_HANDLE)   IndicatorRelease(h_rsi14);
+      if(h_kalman != INVALID_HANDLE)      IndicatorRelease(h_kalman);
+      if(h_multi_short != INVALID_HANDLE) IndicatorRelease(h_multi_short);
+      if(h_multi_mid != INVALID_HANDLE)   IndicatorRelease(h_multi_mid);
+      if(h_multi_long != INVALID_HANDLE)  IndicatorRelease(h_multi_long);
+      if(h_atr14 != INVALID_HANDLE)       IndicatorRelease(h_atr14);
+      if(h_rsi14 != INVALID_HANDLE)       IndicatorRelease(h_rsi14);
    }
    PrintFormat("[*] KalmanTrendEnsembleEA 終了処理完了 (Reason: %d)", reason);
 }
@@ -265,22 +291,33 @@ bool GetShift1IndicatorData(double &kalman_regime,
    kalman_zscore = k_z[0];
    kalman_slope  = k_s[0];
 
-   double buf_lw10[1], buf_lw30[1], buf_lw20[1], buf_lw60[1], buf_lw40[1], buf_lw120[1];
-   if(CopyBuffer(h_lwma10,  0, 1, 1, buf_lw10)  <= 0 ||
-      CopyBuffer(h_lwma30,  0, 1, 1, buf_lw30)  <= 0 ||
-      CopyBuffer(h_lwma20,  0, 1, 1, buf_lw20)  <= 0 ||
-      CopyBuffer(h_lwma60,  0, 1, 1, buf_lw60)  <= 0 ||
-      CopyBuffer(h_lwma40,  0, 1, 1, buf_lw40)  <= 0 ||
-      CopyBuffer(h_lwma120, 0, 1, 1, buf_lw120) <= 0)
+   double buf_fast[1], buf_slow[1];
+   // 短期ペア (Fast: ShortFast, Slow: ShortSlow)
+   if(CopyBuffer(h_multi_short, MULTI_TREND_MA_BUFFER_FAST, 1, 1, buf_fast) <= 0 ||
+      CopyBuffer(h_multi_short, MULTI_TREND_MA_BUFFER_SLOW, 1, 1, buf_slow) <= 0)
    {
       return false;
    }
-   lwma10  = buf_lw10[0];
-   lwma30  = buf_lw30[0];
-   lwma20  = buf_lw20[0];
-   lwma60  = buf_lw60[0];
-   lwma40  = buf_lw40[0];
-   lwma120 = buf_lw120[0];
+   lwma10 = buf_fast[0];
+   lwma30 = buf_slow[0];
+
+   // 中期ペア (Fast: MidFast, Slow: MidSlow)
+   if(CopyBuffer(h_multi_mid, MULTI_TREND_MA_BUFFER_FAST, 1, 1, buf_fast) <= 0 ||
+      CopyBuffer(h_multi_mid, MULTI_TREND_MA_BUFFER_SLOW, 1, 1, buf_slow) <= 0)
+   {
+      return false;
+   }
+   lwma20 = buf_fast[0];
+   lwma60 = buf_slow[0];
+
+   // 長期ペア (Fast: LongFast, Slow: LongSlow)
+   if(CopyBuffer(h_multi_long, MULTI_TREND_MA_BUFFER_FAST, 1, 1, buf_fast) <= 0 ||
+      CopyBuffer(h_multi_long, MULTI_TREND_MA_BUFFER_SLOW, 1, 1, buf_slow) <= 0)
+   {
+      return false;
+   }
+   lwma40  = buf_fast[0];
+   lwma120 = buf_slow[0];
 
    double buf_atr[1], buf_rsi[1];
    if(CopyBuffer(h_atr14, 0, 1, 1, buf_atr) <= 0 ||
