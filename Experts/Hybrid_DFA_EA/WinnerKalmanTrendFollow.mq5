@@ -9,7 +9,7 @@
 #property description "カルマンレジーム推定器と移動平均クロスに基づくWinnerCode型トレンドフォロー売買システム"
 #property strict
 
-#include <Hybrid_DFA_EA\MultiTrendMA.mqh>
+#include <Hybrid_DFA_EA\Hybrid_DFA_EA_Common.mqh>
 
 //--- 外部インジケーターハンドル
 int g_kalman_handle   = INVALID_HANDLE;
@@ -216,36 +216,6 @@ void LoadPersistentState()
       g_state.saved_reset_token = 0;
 }
 
-//+------------------------------------------------------------------+
-//| 1つ上位タイムフレームの自動判別ヘルパー                          |
-//+------------------------------------------------------------------+
-ENUM_TIMEFRAMES GetNextHigherTimeframe(const ENUM_TIMEFRAMES base_tf)
-{
-   switch(base_tf)
-   {
-      case PERIOD_M1:  return PERIOD_M5;
-      case PERIOD_M2:  return PERIOD_M5;
-      case PERIOD_M3:  return PERIOD_M15;
-      case PERIOD_M4:  return PERIOD_M15;
-      case PERIOD_M5:  return PERIOD_M15;
-      case PERIOD_M6:  return PERIOD_M30;
-      case PERIOD_M10: return PERIOD_M30;
-      case PERIOD_M12: return PERIOD_H1;
-      case PERIOD_M15: return PERIOD_H1;  // M15執行時はH1大局を推奨
-      case PERIOD_M20: return PERIOD_H1;
-      case PERIOD_M30: return PERIOD_H4;  // M30執行時はH4大局
-      case PERIOD_H1:  return PERIOD_H4;  // H1執行時はH4大局 (仕様標準)
-      case PERIOD_H2:  return PERIOD_H8;
-      case PERIOD_H3:  return PERIOD_H12;
-      case PERIOD_H4:  return PERIOD_D1;  // H4執行時はD1大局
-      case PERIOD_H6:  return PERIOD_D1;
-      case PERIOD_H8:  return PERIOD_D1;
-      case PERIOD_H12: return PERIOD_D1;
-      case PERIOD_D1:  return PERIOD_W1;  // D1執行時はW1大局
-      case PERIOD_W1:  return PERIOD_MN1; // W1執行時はMN1大局
-      default:         return PERIOD_H4;
-   }
-}
 
 //+------------------------------------------------------------------+
 //| カルマンインジケーターハンドル生成ヘルパー                       |
