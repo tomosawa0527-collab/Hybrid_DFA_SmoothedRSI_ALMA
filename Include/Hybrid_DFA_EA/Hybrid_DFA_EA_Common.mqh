@@ -1,8 +1,11 @@
 //+------------------------------------------------------------------+
-//|                                       KalmanStrategy_Common.mqh |
+//|                                       Hybrid_DFA_EA_Common.mqh   |
 //|                                  Copyright 2026, Quant Research  |
 //|       FX売買戦略仕様書（実運用完全版・カルマンフィルター統合版）共通定義 |
 //+------------------------------------------------------------------+
+#ifndef _HYBRID_DFA_EA_COMMON_MQH_
+#define _HYBRID_DFA_EA_COMMON_MQH_
+
 #property copyright "Copyright 2026, Quant Research"
 #property link "https://www.mql5.com"
 #property strict
@@ -10,24 +13,8 @@
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
 #include "MultiTrendMA.mqh"
+#include "KalmanRegimeEstimator.mqh"
 
-//+------------------------------------------------------------------+
-//| カルマンレジーム定数 (仕様書第3.1章)                             |
-//+------------------------------------------------------------------+
-#define KALMAN_REGIME_UP     1.0    // 上昇トレンドレジーム
-#define KALMAN_REGIME_DOWN  -1.0    // 下降トレンドレジーム
-#define KALMAN_REGIME_RANGE  0.0    // レンジ相場レジーム
-
-// 後方互換用レジーム種別定義
-enum ENUM_REGIME_TYPE {
-  REGIME_NONE = 0,       // 未判定
-  REGIME_RANGE = 1,      // レンジ相場 (反発性 / 平均回帰)
-  REGIME_TRANSITION = 2, // 遷移状態 / ランダムウォーク (不感帯・静観)
-  REGIME_TREND = 3,      // トレンド相場 (持続性 / 追従 - 汎用)
-  REGIME_UP_TREND = 4,   // 上昇トレンド (カルマン Z >= 2.0)
-  REGIME_DOWN_TREND = 5, // 下降トレンド (カルマン Z <= -2.0)
-  REGIME_ALL = 6         // レジーム制限なし (無効時)
-};
 
 //+------------------------------------------------------------------+
 //| 通貨クラスタ定義 (仕様書第8.2章)                                 |
@@ -704,12 +691,6 @@ ENUM_REGIME_TYPE UpdateRegimeWithHysteresis(const ENUM_REGIME_TYPE prevRegime, c
   return DetermineRegime(alpha, thresholdLow, thresholdHigh);
 }
 
-ENUM_REGIME_TYPE DetermineKalmanRegime(const double z, const double threshold = 2.0) {
-  if (!MathIsValidNumber(z) || z == EMPTY_VALUE) return REGIME_RANGE;
-  if (z >= threshold) return REGIME_UP_TREND;
-  if (z <= -threshold) return REGIME_DOWN_TREND;
-  return REGIME_RANGE;
-}
 
 bool ShouldCloseKalmanPosition(const ENUM_STRATEGY_SOURCE source, const ENUM_POSITION_TYPE posType, const double z, const double threshold = 2.0, const double centerLine = 0.0) {
   if (!MathIsValidNumber(z) || z == EMPTY_VALUE) return false;
@@ -720,3 +701,5 @@ bool ShouldCloseKalmanPosition(const ENUM_STRATEGY_SOURCE source, const ENUM_POS
   }
   return false;
 }
+
+#endif // _HYBRID_DFA_EA_COMMON_MQH_

@@ -17,10 +17,12 @@
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
-#include "..\..\Include\Hybrid_DFA_EA\KalmanStrategy_Common.mqh"
+#include "..\..\Include\Hybrid_DFA_EA\Hybrid_DFA_EA_Common.mqh"
 
 //--- デフォルト配置パス定義
+#ifndef DEFAULT_KALMAN_INDICATOR_PATH
 #define DEFAULT_KALMAN_INDICATOR_PATH "Hybrid_DFA_EA\\KalmanRegimeEstimator"
+#endif
 
 //+------------------------------------------------------------------+
 //| 入力パラメータ                                                   |
@@ -37,11 +39,13 @@ input ENUM_TIMEFRAMES   InpKalmanTF             = PERIOD_D1;      // カルマ�
 input bool              InpIndAutoTimeframeScale= true;           // 時間足に応じたノイズ自動スケーリング
 input bool              InpIndAutoCalibration   = true;           // Rice推定量による解析的自動キャリブレーション
 input double            InpIndTargetLagBars     = 10.0;           // ターゲット時定数 (抽出スイング幅: 8〜15本推奨)
-input int               InpIndCalibSamples      = 1000;           // 観測ノイズ計測バー数
+input int               InpIndRollingWindow     = 200;            // ローリング観測窓長 W (100〜250推奨)
 input double            InpIndManualQMu         = 0.0;            // プロセスノイズ (水準: 手動用)
-input double            InpIndManualQBeta       = 1e-8;           // プロセスノイズ (傾き: 手動用)
-input double            InpIndManualR           = 1e-4;           // 観測ノイズ (R: 手動用)
+input double            InpIndManualQBeta       = 1e-9;           // プロセスノイズ (傾き: 手動用)
+input double            InpIndManualR           = 1e-5;           // 観測ノイズ (R: 手動用)
 input double            InpIndManualInitialP    = 1.0;            // 初期誤差共分散スケール
+
+#define InpIndCalibSamples InpIndRollingWindow // 後方互換用エイリアス
 input double            InpIndZEnter            = 2.0;            // トレンド突入閾値 (|z| >= z_enter)
 input double            InpIndZExit             = 1.0;            // トレンド離脱閾値 (|z| <= z_exit)
 input bool              InpIndAllowDirectReversal= true;          // 急反転時の即時ドテン許可
@@ -114,14 +118,14 @@ int CreateKalmanIndicatorHandle(const string indicator_path)
                   InpKalmanTF,
                   InpIndAutoTimeframeScale,
 
-                  // --- Group 2: 解析的自律キャリブレーション ---
-                  "=== 解析的自律キャリブレーション (Closed-Form Analytical) ===",
+                  // --- Group 2: 確定足動的キャリブレーション (完全因果的・先読みゼロ) ---
+                  "=== 確定足動的キャリブレーション (完全因果的・先読みゼロ) ===",
                   InpIndAutoCalibration,
                   InpIndTargetLagBars,
-                  InpIndCalibSamples,
+                  InpIndRollingWindow,
 
-                  // --- Group 3: カルマンフィルター パラメータ ---
-                  "=== カルマンフィルター パラメータ (手動設定時またはフォールバック) ===",
+                  // --- Group 3: カルマンフィルター パラメータ (手動設定時または初期フォールバック) ---
+                  "=== カルマンフィルター パラメータ (手動設定時または初期フォールバック) ===",
                   InpIndManualQMu,
                   InpIndManualQBeta,
                   InpIndManualR,

@@ -13,7 +13,7 @@
 #property tester_indicator "KalmanRegimeEstimator.ex5"
 #property tester_indicator "Indicators\\Hybrid_DFA_EA\\KalmanRegimeEstimator.ex5"
 
-#include "..\..\Include\Hybrid_DFA_EA\KalmanStrategy_Common.mqh"
+#include "..\..\Include\Hybrid_DFA_EA\Hybrid_DFA_EA_Common.mqh"
 #include <Trade\PositionInfo.mqh>
 #include <Trade\Trade.mqh>
 
@@ -28,15 +28,18 @@ input ulong InpSlippage = 10;                                               // �
 
 //--- カルマンフィルター レジーム判定設定
 input group "=== カルマンフィルター (レジーム判定) 設定 ==="
-input bool InpUseKalman = true;                                                // カルマンレジーム判定を有効化
-input ENUM_HTF_MODE InpKalmanTimeframeMode = HTF_MODE_AUTO_NEXT;               // カルマン計算時間軸 (デフォルト: 1段階上位足)
-input bool InpKalmanAutoTimeframeScale = true;                                 // 時間足に応じたノイズ自動スケーリング
-input bool InpKalmanAutoCalibration = true;                                    // Rice推定量による解析的自動キャリブレーション
-input double InpKalmanTargetLagBars = 10.0;                                    // ターゲット時定数 (目安バー数: 8〜15推奨)
-input int InpKalmanCalibSamples = 1000;                                        // 観測ノイズ計測バー数
-input double InpKalmanZThreshold = 2.0;                                        // トレンド判定閾値 (>=2.0で上昇, <=-2.0で下降, 間はレンジ)
-input double InpKalmanZExit = 1.0;                                             // トレンド離脱閾値 (インジケータ内部ヒステリシス用)
-input ENUM_APPLIED_PRICE InpKalmanAppliedPrice = PRICE_CLOSE;                  // 適用価格
+input bool InpUseKalman                    = true;              // カルマンレジーム判定を有効化
+input ENUM_HTF_MODE InpKalmanTimeframeMode = HTF_MODE_AUTO_NEXT;// カルマン計算時間軸 (デフォルト: 1段階上位足)
+input bool InpKalmanAutoTimeframeScale     = true;              // 時間足に応じたノイズ自動スケーリング
+input bool InpKalmanAutoCalibration        = true;              // Rice推定量による解析的自動キャリブレーション
+input double InpKalmanTargetLagBars        = 10.0;              // ターゲット時定数 (目安バー数: 8〜15推奨)
+input int InpKalmanRollingWindow           = 200;               // ローリング観測窓長 W (100〜250推奨)
+input double InpKalmanZEnter               = 2.0;               // トレンド突入閾値 (|Z| >= ZEnter でトレンド判定)
+input double InpKalmanZExit                = 1.0;               // トレンド離脱閾値 (|Z| <= ZExit でレンジ復帰)
+input ENUM_APPLIED_PRICE InpKalmanAppliedPrice = PRICE_CLOSE;   // 適用価格
+
+#define InpKalmanZThreshold   InpKalmanZEnter    // 後方互換用エイリアス
+#define InpKalmanCalibSamples InpKalmanRollingWindow // 後方互換用エイリアス
 
 //--- レンジ戦略 (Super Smoother + RSI) 設定
 input group "=== レンジ戦略 (Super Smoother + RSI) ==="
@@ -50,8 +53,8 @@ input double InpRsiOversold = 35.0;                                         // R
 input group "=== トレンド戦略 (Dual MA Cross) ==="
 input bool InpUseTrendStrategy = true;                                      // トレンド戦略 (Dual MA Cross) を有効化
 input ENUM_TREND_MA_TYPE InpTrendMaType = TREND_MA_LWMA;                    // 移動平均タイプ (SMA/EMA/SMMA/LWMA/ALMA)
-input int InpMaFastWindow = 20;                                             // 短期 MA 期間 / 窓幅 (Fast Window)
-input int InpMaSlowWindow = 40;                                             // 長期 MA 期間 / 窓幅 (Slow Window)
+input ENUM_MA_PERIOD InpMaFastWindow = MA_PERIOD_20;                        // 短期 MA 期間 / 窓幅 (Fast Window)
+input ENUM_MA_PERIOD InpMaSlowWindow = MA_PERIOD_40;                        // 長期 MA 期間 / 窓幅 (Slow Window)
 input ENUM_APPLIED_PRICE InpMaAppliedPrice = PRICE_CLOSE;                   // 適用価格
 
 //--- ALMA専用パラメータ (InpTrendMaType == TREND_MA_ALMA 時に有効)
@@ -111,22 +114,22 @@ int CreateKalmanIndicatorHandle(const string indicator_path, const ENUM_TIMEFRAM
                    tf,
                    InpKalmanAutoTimeframeScale,
 
-                   // --- Group 2: 解析的自律キャリブレーション ---
-                   "=== 解析的自律キャリブレーション (Closed-Form Analytical) ===",
+                   // --- Group 2: 確定足動的キャリブレーション (完全因果的・先読みゼロ) ---
+                   "=== 確定足動的キャリブレーション (完全因果的・先読みゼロ) ===",
                    InpKalmanAutoCalibration,
                    InpKalmanTargetLagBars,
-                   InpKalmanCalibSamples,
+                   InpKalmanRollingWindow,
 
-                   // --- Group 3: カルマンフィルター パラメータ ---
-                   "=== カルマンフィルター パラメータ (手動設定時またはフォールバック) ===",
+                   // --- Group 3: カルマンフィルター パラメータ (手動設定時または初期フォールバック) ---
+                   "=== カルマンフィルター パラメータ (手動設定時または初期フォールバック) ===",
                    0.0,    // InpManualQMu
-                   1e-8,   // InpManualQBeta
-                   1e-4,   // InpManualR
+                   1e-9,   // InpManualQBeta
+                   1e-5,   // InpManualR
                    1.0,    // InpManualInitialP
 
                    // --- Group 4: レジーム判定 (ヒステリシス) パラメータ ---
                    "=== レジーム判定 (ヒステリシス) パラメータ ===",
-                   InpKalmanZThreshold,
+                   InpKalmanZEnter,
                    InpKalmanZExit,
                    true,   // InpAllowDirectReversal
                    InpKalmanAppliedPrice);
@@ -378,8 +381,8 @@ bool UpdateSystemState(SSystemState& state) {
         ArraySetAsSeries(slowBuf, true);
         ArraySetAsSeries(sigBuf, true);
 
-        if (CopyBuffer(h_multiDualMa, 0, 1, 2, fastBuf) == 2 &&
-            CopyBuffer(h_multiDualMa, 2, 1, 2, slowBuf) == 2) {
+        if (CopyBuffer(h_multiDualMa, MULTI_TREND_MA_BUFFER_FAST, 1, 2, fastBuf) == 2 &&
+            CopyBuffer(h_multiDualMa, MULTI_TREND_MA_BUFFER_SLOW, 1, 2, slowBuf) == 2) {
             state.alma_fast_1 = fastBuf[0];
             state.alma_fast_2 = fastBuf[1];
             state.alma_slow_1 = slowBuf[0];

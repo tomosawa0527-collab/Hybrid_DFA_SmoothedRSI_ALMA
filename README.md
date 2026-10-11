@@ -32,18 +32,23 @@ graph TD
 ```text
 ├── Experts/
 │   └── Hybrid_DFA_EA/
-│       ├── KalmanTrendEnsembleEA.mq5 # 【新仕様書完全準拠】カルマンレジーム・マルチホライズンLWMAアンサンブル・二重防護EA
-│       ├── Hybrid_DFA_EA.mq5         # ハイブリッド自動売買EA (カルマンレジーム判定・ポジション管理・発注制御)
-│       └── KalmanRegimeEA.mq5        # カルマンフィルター特化型トレンドフォローEA
+│       ├── KalmanTrendEnsembleEA.mq5   # 【新仕様書完全準拠】カルマンレジーム・マルチホライズンLWMAアンサンブル・二重防護EA
+│       ├── Hybrid_DFA_EA.mq5           # ハイブリッド自動売買EA (カルマンレジーム判定・ポジション管理・発注制御)
+│       ├── WinnerKalmanTrendFollow.mq5 # カルマンレジーム推定器と移動平均クロスに基づくトレンドフォローEA
+│       └── old/
+│           └── KalmanRegimeEA.mq5      # 旧カルマンフィルター特化型トレンドフォローEA (アーカイブ)
 ├── Include/
 │   └── Hybrid_DFA_EA/
-│       └── KalmanStrategy_Common.mqh # 共通定義・クラスタリスク管理・資金管理・注文執行補助・レジーム状態遷移機械
+│       ├── Hybrid_DFA_EA_Common.mqh  # 共通定義・クラスタリスク管理・資金管理・注文執行補助・レジーム状態遷移機械
+│       ├── KalmanRegimeEstimator.mqh # カルマンレジーム推定器 専用ヘッダ・バッファ定義
+│       └── MultiTrendMA.mqh          # MultiTrendMA 専用ヘッダ・バッファ定義
 ├── Indicators/
 │   └── Hybrid_DFA_EA/
 │       ├── KalmanRegimeEstimator.mq5 # 平滑トレンドモデル自律キャリブレーション型カルマンレジーム推定
-│       ├── DFA.mq5                   # 双方向DFAレジーム判別インディケータ (静的バッファ最適化済み)
+│       ├── MultiTrendMA.mq5          # マルチタイプ対応3ライン移動平均線 (SMA/EMA/SMMA/LWMA/ALMA)
 │       ├── SmoothedRSI.mq5           # 2-Pole Super Smoother 平滑化RSI
-│       └── MultiDualMA.mq5           # マルチタイプ対応デュアル移動平均線 (SMA/EMA/SMMA/LWMA/ALMA)
+│       └── old/
+│           └── DFA.mq5               # 旧双方向DFAレジーム判別インディケータ (アーカイブ)
 └── docs/
     ├── FX売買戦略仕様書（実運用完全版・カルマンフィルター統合版）.md # 実運用完全版仕様書
     ├── kalman_regime_estimator.md     # カルマンレジーム推定インジケーター技術仕様書
