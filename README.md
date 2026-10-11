@@ -32,9 +32,11 @@ graph TD
 ```text
 ├── Experts/
 │   └── Hybrid_DFA_EA/
-│       ├── KalmanTrendEnsembleEA.mq5 # 【新仕様書完全準拠】カルマンレジーム・マルチホライズンLWMAアンサンブル・二重防護EA
-│       ├── Hybrid_DFA_EA.mq5         # ハイブリッド自動売買EA (カルマンレジーム判定・ポジション管理・発注制御)
-│       └── KalmanRegimeEA.mq5        # カルマンフィルター特化型トレンドフォローEA
+│       ├── KalmanTrendEnsembleEA.mq5   # 【新仕様書完全準拠】カルマンレジーム・マルチホライズンLWMAアンサンブル・二重防護EA
+│       ├── Hybrid_DFA_EA.mq5           # ハイブリッド自動売買EA (カルマンレジーム判定・ポジション管理・発注制御)
+│       ├── WinnerKalmanTrendFollow.mq5 # カルマンレジーム推定器と移動平均クロスに基づくトレンドフォローEA
+│       └── old/
+│           └── KalmanRegimeEA.mq5      # 旧カルマンフィルター特化型トレンドフォローEA (アーカイブ)
 ├── Include/
 │   └── Hybrid_DFA_EA/
 │       ├── Hybrid_DFA_EA_Common.mqh  # 共通定義・クラスタリスク管理・資金管理・注文執行補助・レジーム状態遷移機械
