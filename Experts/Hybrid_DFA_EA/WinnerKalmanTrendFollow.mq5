@@ -65,6 +65,7 @@ input ENUM_TIMEFRAMES      InpKalmanCustomTF          = PERIOD_H4;             /
 input group "=== カルマンレジーム推定器設定 ==="
 input bool                 InpKalmanAutoCalib         = true;                  // カルマン自動キャリブレーション (false: 固定値, true: 動的計測_Rice推定版なので推奨)
 input double               InpTargetLagBars           = 10.0;                  // カルマン時定数 (tau: Auto時のみ有効)
+input int                  InpRollingWindow           = 200;                   // ローリング観測窓長 W (100〜250推奨)
 input string               InpKalmanQBeta             = "1.137e-10";           // 傾きプロセスノイズ q_beta (手動設定用, 例: 1.137e-10)
 input string               InpKalmanR                 = "1.137e-06";           // 観測ノイズ分散 R (手動設定用, 例: 1.137e-06)
 input double               InpZEnter                  = 2.0;                   // レジーム突入閾値
@@ -252,14 +253,14 @@ int CreateKalmanHandle()
                       k_tf,
                       false, // InpAutoTimeframeScale: 二重スケーリングを防ぐため必ず false
 
-                      // --- Group 2: 解析的自律キャリブレーション ---
-                      "=== 解析的自律キャリブレーション (Closed-Form Analytical) ===",
+                      // --- Group 2: 確定足動的キャリブレーション (完全因果的・先読みゼロ) ---
+                      "=== 確定足動的キャリブレーション (完全因果的・先読みゼロ) ===",
                       InpKalmanAutoCalib,
                       InpTargetLagBars,
-                      1000, // InpCalibSamples
+                      InpRollingWindow,
 
-                      // --- Group 3: カルマンフィルター パラメータ ---
-                      "=== カルマンフィルター パラメータ (手動設定時またはフォールバック) ===",
+                      // --- Group 3: カルマンフィルター パラメータ (手動設定時または初期フォールバック) ---
+                      "=== カルマンフィルター パラメータ (手動設定時または初期フォールバック) ===",
                       0.0,    // InpManualQMu
                       q_beta, // InpManualQBeta
                       r,      // InpManualR

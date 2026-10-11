@@ -28,15 +28,18 @@ input ulong InpSlippage = 10;                                               // �
 
 //--- カルマンフィルター レジーム判定設定
 input group "=== カルマンフィルター (レジーム判定) 設定 ==="
-input bool InpUseKalman = true;                                                // カルマンレジーム判定を有効化
-input ENUM_HTF_MODE InpKalmanTimeframeMode = HTF_MODE_AUTO_NEXT;               // カルマン計算時間軸 (デフォルト: 1段階上位足)
-input bool InpKalmanAutoTimeframeScale = true;                                 // 時間足に応じたノイズ自動スケーリング
-input bool InpKalmanAutoCalibration = true;                                    // Rice推定量による解析的自動キャリブレーション
-input double InpKalmanTargetLagBars = 10.0;                                    // ターゲット時定数 (目安バー数: 8〜15推奨)
-input int InpKalmanCalibSamples = 1000;                                        // 観測ノイズ計測バー数
-input double InpKalmanZThreshold = 2.0;                                        // トレンド判定閾値 (>=2.0で上昇, <=-2.0で下降, 間はレンジ)
-input double InpKalmanZExit = 1.0;                                             // トレンド離脱閾値 (インジケータ内部ヒステリシス用)
-input ENUM_APPLIED_PRICE InpKalmanAppliedPrice = PRICE_CLOSE;                  // 適用価格
+input bool InpUseKalman                    = true;              // カルマンレジーム判定を有効化
+input ENUM_HTF_MODE InpKalmanTimeframeMode = HTF_MODE_AUTO_NEXT;// カルマン計算時間軸 (デフォルト: 1段階上位足)
+input bool InpKalmanAutoTimeframeScale     = true;              // 時間足に応じたノイズ自動スケーリング
+input bool InpKalmanAutoCalibration        = true;              // Rice推定量による解析的自動キャリブレーション
+input double InpKalmanTargetLagBars        = 10.0;              // ターゲット時定数 (目安バー数: 8〜15推奨)
+input int InpKalmanRollingWindow           = 200;               // ローリング観測窓長 W (100〜250推奨)
+input double InpKalmanZEnter               = 2.0;               // トレンド突入閾値 (|Z| >= ZEnter でトレンド判定)
+input double InpKalmanZExit                = 1.0;               // トレンド離脱閾値 (|Z| <= ZExit でレンジ復帰)
+input ENUM_APPLIED_PRICE InpKalmanAppliedPrice = PRICE_CLOSE;   // 適用価格
+
+#define InpKalmanZThreshold   InpKalmanZEnter    // 後方互換用エイリアス
+#define InpKalmanCalibSamples InpKalmanRollingWindow // 後方互換用エイリアス
 
 //--- レンジ戦略 (Super Smoother + RSI) 設定
 input group "=== レンジ戦略 (Super Smoother + RSI) ==="
@@ -111,22 +114,22 @@ int CreateKalmanIndicatorHandle(const string indicator_path, const ENUM_TIMEFRAM
                    tf,
                    InpKalmanAutoTimeframeScale,
 
-                   // --- Group 2: 解析的自律キャリブレーション ---
-                   "=== 解析的自律キャリブレーション (Closed-Form Analytical) ===",
+                   // --- Group 2: 確定足動的キャリブレーション (完全因果的・先読みゼロ) ---
+                   "=== 確定足動的キャリブレーション (完全因果的・先読みゼロ) ===",
                    InpKalmanAutoCalibration,
                    InpKalmanTargetLagBars,
-                   InpKalmanCalibSamples,
+                   InpKalmanRollingWindow,
 
-                   // --- Group 3: カルマンフィルター パラメータ ---
-                   "=== カルマンフィルター パラメータ (手動設定時またはフォールバック) ===",
+                   // --- Group 3: カルマンフィルター パラメータ (手動設定時または初期フォールバック) ---
+                   "=== カルマンフィルター パラメータ (手動設定時または初期フォールバック) ===",
                    0.0,    // InpManualQMu
-                   1e-8,   // InpManualQBeta
-                   1e-4,   // InpManualR
+                   1e-9,   // InpManualQBeta
+                   1e-5,   // InpManualR
                    1.0,    // InpManualInitialP
 
                    // --- Group 4: レジーム判定 (ヒステリシス) パラメータ ---
                    "=== レジーム判定 (ヒステリシス) パラメータ ===",
-                   InpKalmanZThreshold,
+                   InpKalmanZEnter,
                    InpKalmanZExit,
                    true,   // InpAllowDirectReversal
                    InpKalmanAppliedPrice);
