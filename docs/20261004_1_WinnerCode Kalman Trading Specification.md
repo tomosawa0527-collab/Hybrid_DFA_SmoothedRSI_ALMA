@@ -273,7 +273,7 @@ MQL5の CalendarValueHistory などの経済指標APIは、MetaTrader 5の**ス�
 
 静的配列宣言を排除して動的配列（double arr\[\];）へ統一し、ArraySetAsSeries を確実に有効化させた最新完全コードです。  
 `//+------------------------------------------------------------------+`  
-`//|                                     WinnerKalmanTrendFollow.mq5  |`  
+`//|                                   WinnerKalmanTrendFollowEA.mq5  |`  
 `//|                                  Copyright 2026, Quant Research  |`  
 `//|               Strict Trend-Following System based on WinnerCode  |`  
 `//+------------------------------------------------------------------+`  

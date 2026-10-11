@@ -34,7 +34,7 @@ graph TD
 │   └── Hybrid_DFA_EA/
 │       ├── KalmanTrendEnsembleEA.mq5   # 【新仕様書完全準拠】カルマンレジーム・マルチホライズンLWMAアンサンブル・二重防護EA
 │       ├── Hybrid_DFA_EA.mq5           # ハイブリッド自動売買EA (カルマンレジーム判定・ポジション管理・発注制御)
-│       ├── WinnerKalmanTrendFollow.mq5 # カルマンレジーム推定器と移動平均クロスに基づくトレンドフォローEA
+│       ├── WinnerKalmanTrendFollowEA.mq5 # カルマンレジーム推定器と移動平均クロスに基づくトレンドフォローEA
 │       └── old/
 │           └── KalmanRegimeEA.mq5      # 旧カルマンフィルター特化型トレンドフォローEA (アーカイブ)
 ├── Include/

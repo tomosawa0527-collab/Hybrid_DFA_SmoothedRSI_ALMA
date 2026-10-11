@@ -140,9 +140,9 @@
             "-If:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Include",
             "-D__MQL5_BUILD__",
             "-c",
-            "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Experts/Hybrid_DFA_EA/WinnerKalmanTrendFollow.mq5"
+            "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Experts/Hybrid_DFA_EA/WinnerKalmanTrendFollowEA.mq5"
         ],
-        "file": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Experts/Hybrid_DFA_EA/WinnerKalmanTrendFollow.mq5"
+        "file": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA/Experts/Hybrid_DFA_EA/WinnerKalmanTrendFollowEA.mq5"
     },
     {
         "directory": "f:/GDrive/Data/MT5/AI/20260823_Hybrid_DFA/Hybrid_DFA_SmoothedRSI_ALMA",

@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|                                     WinnerKalmanTrendFollow.mq5  |
+//|                                   WinnerKalmanTrendFollowEA.mq5  |
 //|                                  Copyright 2026, Quant Research  |
 //|               Strict Trend-Following System based on WinnerCode  |
 //+------------------------------------------------------------------+
