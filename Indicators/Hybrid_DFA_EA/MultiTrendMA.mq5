@@ -1,4 +1,4 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //|                                                 MultiTrendMA.mq5 |
 //|                                  Copyright 2026, Hybrid DFA Quant |
 //|                                             https://www.mql5.com |
@@ -438,25 +438,25 @@ int OnCalculate(const int rates_total,
         {
            double h_band = curAtr * InpHysteresisFactor;
            if(diff > h_band)
-              BufferSignalState[i] = 1.0;
+              BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_BULLISH;
            else if(diff < -h_band)
-              BufferSignalState[i] = -1.0;
+              BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_BEARISH;
            else
-              BufferSignalState[i] = (i > 0) ? BufferSignalState[i - 1] : 0.0;
+              BufferSignalState[i] = (i > 0) ? BufferSignalState[i - 1] : MULTI_TREND_MA_SIGNAL_NEUTRAL;
         }
         else
         {
            if(diff > 0.0)
-              BufferSignalState[i] = 1.0;
+              BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_BULLISH;
            else if(diff < 0.0)
-              BufferSignalState[i] = -1.0;
+              BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_BEARISH;
            else
-              BufferSignalState[i] = (i > 0) ? BufferSignalState[i - 1] : 0.0;
+              BufferSignalState[i] = (i > 0) ? BufferSignalState[i - 1] : MULTI_TREND_MA_SIGNAL_NEUTRAL;
         }
      }
      else
      {
-        BufferSignalState[i] = 0.0;
+        BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_NEUTRAL;
      }
   }
 

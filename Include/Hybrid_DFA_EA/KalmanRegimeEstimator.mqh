@@ -10,43 +10,8 @@
 #property link      "https://www.mql5.com"
 #property strict
 
-//--- デフォルト配置パス定義
-#ifndef DEFAULT_KALMAN_INDICATOR_PATH
-#define DEFAULT_KALMAN_INDICATOR_PATH "Hybrid_DFA_EA\\KalmanRegimeEstimator"
-#endif
-
 //+------------------------------------------------------------------+
-//| カルマンレジーム定数 (インジケーター出力値: double)              |
-//+------------------------------------------------------------------+
-#define KALMAN_REGIME_UP     1.0   // 上昇トレンド (+1.0)
-#define KALMAN_REGIME_DOWN  -1.0   // 下降トレンド (-1.0)
-#define KALMAN_REGIME_RANGE  0.0   // レンジ相場 (0.0)
-
-//+------------------------------------------------------------------+
-//| カラーバッファ用インデックス定数                                 |
-//+------------------------------------------------------------------+
-#define KALMAN_COLOR_UP      0     // clrDodgerBlue
-#define KALMAN_COLOR_DOWN    1     // clrCrimson
-#define KALMAN_COLOR_RANGE   2     // clrDarkGray
-
-// 後方互換用エイリアス
-#define COLOR_UP             KALMAN_COLOR_UP
-#define COLOR_DOWN           KALMAN_COLOR_DOWN
-#define COLOR_RANGE          KALMAN_COLOR_RANGE
-
-//+------------------------------------------------------------------+
-//| インジケーターバッファインデックス定義 (EA・外部プログラム共有) |
-//+------------------------------------------------------------------+
-#define KALMAN_BUFFER_ZSCORE 0     // プロット用: Zスコア (DRAW_COLOR_LINE)
-#define KALMAN_BUFFER_COLOR  1     // プロット用: カラーインデックス (COLOR_INDEX)
-#define KALMAN_BUFFER_SLOPE  2     // 計算用/EA取得用: 局所的な傾き beta (CALCULATIONS)
-#define KALMAN_BUFFER_REGIME 3     // 計算用/EA取得用: レジーム判定値 (CALCULATIONS: +1.0/0.0/-1.0)
-
-//--- 総バッファ数定義
-#define KALMAN_TOTAL_BUFFERS 4
-
-//+------------------------------------------------------------------+
-//| カルマンレジーム種別定義 (EA内部状態・後方互換用)                |
+//| カルマンレジーム種別定義 (Enum)                                  |
 //+------------------------------------------------------------------+
 #ifndef _ENUM_REGIME_TYPE_DEFINED_
 #define _ENUM_REGIME_TYPE_DEFINED_
@@ -77,6 +42,53 @@ struct KalmanState
    double regime;      // 現在のレジーム状態
    bool   initialized; // 初期化フラグ
 };
+#endif
+
+//+------------------------------------------------------------------+
+//| カルマンレジーム定数 (インジケーター出力値: double)              |
+//+------------------------------------------------------------------+
+#define KALMAN_REGIME_UP                  1.0   // 上昇トレンド (+1.0)
+#define KALMAN_REGIME_DOWN               -1.0   // 下降トレンド (-1.0)
+#define KALMAN_REGIME_RANGE               0.0   // レンジ相場 (0.0)
+
+//+------------------------------------------------------------------+
+//| カラーバッファ用インデックス定数                                 |
+//+------------------------------------------------------------------+
+#define KALMAN_COLOR_UP                   0     // clrDodgerBlue
+#define KALMAN_COLOR_DOWN                 1     // clrCrimson
+#define KALMAN_COLOR_RANGE                2     // clrDarkGray
+
+// 後方互換用エイリアス
+#define COLOR_UP                          KALMAN_COLOR_UP
+#define COLOR_DOWN                        KALMAN_COLOR_DOWN
+#define COLOR_RANGE                       KALMAN_COLOR_RANGE
+
+//+------------------------------------------------------------------+
+//| インジケーターバッファインデックス定義 (EA・外部プログラム共有) |
+//+------------------------------------------------------------------+
+#define KALMAN_BUFFER_ZSCORE              0     // プロット用: Zスコア (DRAW_COLOR_LINE)
+#define KALMAN_BUFFER_COLOR               1     // プロット用: カラーインデックス (COLOR_INDEX)
+#define KALMAN_BUFFER_SLOPE               2     // 計算用/EA取得用: 局所的な傾き beta (CALCULATIONS)
+#define KALMAN_BUFFER_REGIME              3     // 計算用/EA取得用: レジーム判定値 (CALCULATIONS: +1.0/0.0/-1.0)
+
+// インジケーター名完全準拠エイリアス
+#define KALMAN_REGIME_ESTIMATOR_BUFFER_ZSCORE KALMAN_BUFFER_ZSCORE
+#define KALMAN_REGIME_ESTIMATOR_BUFFER_COLOR  KALMAN_BUFFER_COLOR
+#define KALMAN_REGIME_ESTIMATOR_BUFFER_SLOPE  KALMAN_BUFFER_SLOPE
+#define KALMAN_REGIME_ESTIMATOR_BUFFER_REGIME KALMAN_BUFFER_REGIME
+
+//--- 総バッファ数定義
+#define KALMAN_TOTAL_BUFFERS              4
+#define KALMAN_REGIME_ESTIMATOR_TOTAL_BUFFERS 4
+
+//+------------------------------------------------------------------+
+//| デフォルト配置パス定義                                           |
+//+------------------------------------------------------------------+
+#ifndef DEFAULT_KALMAN_INDICATOR_PATH
+#define DEFAULT_KALMAN_INDICATOR_PATH     "Hybrid_DFA_EA\\KalmanRegimeEstimator"
+#endif
+#ifndef DEFAULT_KALMAN_REGIME_ESTIMATOR_PATH
+#define DEFAULT_KALMAN_REGIME_ESTIMATOR_PATH DEFAULT_KALMAN_INDICATOR_PATH
 #endif
 
 //+------------------------------------------------------------------+
