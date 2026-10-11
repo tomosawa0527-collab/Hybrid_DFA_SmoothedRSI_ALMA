@@ -13,7 +13,7 @@
 #property tester_indicator "KalmanRegimeEstimator.ex5"
 #property tester_indicator "Indicators\\Hybrid_DFA_EA\\KalmanRegimeEstimator.ex5"
 
-#include "..\..\Include\Hybrid_DFA_EA\KalmanStrategy_Common.mqh"
+#include "..\..\Include\Hybrid_DFA_EA\Hybrid_DFA_EA_Common.mqh"
 #include <Trade\PositionInfo.mqh>
 #include <Trade\Trade.mqh>
 
@@ -378,8 +378,8 @@ bool UpdateSystemState(SSystemState& state) {
         ArraySetAsSeries(slowBuf, true);
         ArraySetAsSeries(sigBuf, true);
 
-        if (CopyBuffer(h_multiDualMa, 0, 1, 2, fastBuf) == 2 &&
-            CopyBuffer(h_multiDualMa, 2, 1, 2, slowBuf) == 2) {
+        if (CopyBuffer(h_multiDualMa, MULTI_TREND_MA_BUFFER_FAST, 1, 2, fastBuf) == 2 &&
+            CopyBuffer(h_multiDualMa, MULTI_TREND_MA_BUFFER_SLOW, 1, 2, slowBuf) == 2) {
             state.alma_fast_1 = fastBuf[0];
             state.alma_fast_2 = fastBuf[1];
             state.alma_slow_1 = slowBuf[0];

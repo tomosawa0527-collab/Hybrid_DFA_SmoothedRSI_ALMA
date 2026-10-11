@@ -17,10 +17,12 @@
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
-#include "..\..\Include\Hybrid_DFA_EA\KalmanStrategy_Common.mqh"
+#include "..\..\Include\Hybrid_DFA_EA\Hybrid_DFA_EA_Common.mqh"
 
 //--- デフォルト配置パス定義
+#ifndef DEFAULT_KALMAN_INDICATOR_PATH
 #define DEFAULT_KALMAN_INDICATOR_PATH "Hybrid_DFA_EA\\KalmanRegimeEstimator"
+#endif
 
 //+------------------------------------------------------------------+
 //| 入力パラメータ                                                   |

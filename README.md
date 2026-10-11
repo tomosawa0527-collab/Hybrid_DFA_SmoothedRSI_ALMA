@@ -37,7 +37,9 @@ graph TD
 │       └── KalmanRegimeEA.mq5        # カルマンフィルター特化型トレンドフォローEA
 ├── Include/
 │   └── Hybrid_DFA_EA/
-│       └── KalmanStrategy_Common.mqh # 共通定義・クラスタリスク管理・資金管理・注文執行補助・レジーム状態遷移機械
+│       ├── Hybrid_DFA_EA_Common.mqh  # 共通定義・クラスタリスク管理・資金管理・注文執行補助・レジーム状態遷移機械
+│       ├── KalmanRegimeEstimator.mqh # カルマンレジーム推定器 専用ヘッダ・バッファ定義
+│       └── MultiTrendMA.mqh          # MultiTrendMA 専用ヘッダ・バッファ定義
 ├── Indicators/
 │   └── Hybrid_DFA_EA/
 │       ├── KalmanRegimeEstimator.mq5 # 平滑トレンドモデル自律キャリブレーション型カルマンレジーム推定

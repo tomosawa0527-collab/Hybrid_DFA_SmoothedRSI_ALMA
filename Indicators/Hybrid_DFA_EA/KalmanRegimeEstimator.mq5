@@ -17,16 +17,7 @@
 #property indicator_color1 clrDodgerBlue, clrCrimson, clrDarkGray
 #property indicator_style1 STYLE_SOLID
 #property indicator_width1 2
-
-//--- レジーム定義定数
-#define REGIME_UP     1.0  // 上昇トレンド
-#define REGIME_DOWN  -1.0  // 下降トレンド
-#define REGIME_RANGE  0.0  // レンジ相場
-
-//--- カラーバッファ用インデックス
-#define COLOR_UP    0  // clrDodgerBlue
-#define COLOR_DOWN  1  // clrCrimson
-#define COLOR_RANGE 2  // clrDarkGray
+#include <Hybrid_DFA_EA\KalmanRegimeEstimator.mqh>
 
 //--- 入力パラメータ
 input group "=== マルチタイムフレーム (MTF) 設定 ==="
@@ -50,17 +41,6 @@ input double             InpZExit               = 1.0;         // トレンド�
 input bool               InpAllowDirectReversal = true;        // 急反転時の即時ドテン許可 (UP <-> DOWN 直行)
 input ENUM_APPLIED_PRICE InpAppliedPrice        = PRICE_CLOSE; // 適用価格
 
-//--- 各バーの状態を隔離保持する構造体（未確定足の状態汚染防止）
-struct KalmanState
-{
-   double mu;          // 平滑化対数価格水準 ln(P)
-   double beta;        // 局所的な対数傾き (1足あたりの期待リターン速度)
-   double p00;         // 共分散 P[0,0]
-   double p01;         // 共分散 P[0,1]
-   double p11;         // 共分散 P[1,1]
-   double regime;      // 現在のレジーム状態
-   bool   initialized; // 初期化フラグ
-};
 
 //--- インジケーターバッファ
 double BufferZScore[]; // プロット用: Zスコア
@@ -202,10 +182,10 @@ int OnInit()
    g_tf_cached_initial_p = g_base_initial_p;
 
    // バッファバインド
-   SetIndexBuffer(0, BufferZScore, INDICATOR_DATA);
-   SetIndexBuffer(1, BufferColor, INDICATOR_COLOR_INDEX);
-   SetIndexBuffer(2, BufferSlope, INDICATOR_CALCULATIONS);
-   SetIndexBuffer(3, BufferRegime, INDICATOR_CALCULATIONS);
+   SetIndexBuffer(KALMAN_BUFFER_ZSCORE, BufferZScore, INDICATOR_DATA);
+   SetIndexBuffer(KALMAN_BUFFER_COLOR,  BufferColor,  INDICATOR_COLOR_INDEX);
+   SetIndexBuffer(KALMAN_BUFFER_SLOPE,  BufferSlope,  INDICATOR_CALCULATIONS);
+   SetIndexBuffer(KALMAN_BUFFER_REGIME, BufferRegime, INDICATOR_CALCULATIONS);
 
    IndicatorSetInteger(INDICATOR_DIGITS, 2);
 
@@ -273,12 +253,12 @@ void UpdateKalmanStepDynamic(const KalmanState &prevState,
       outState.p00         = initial_p; // ★ 正しくスケーリングされた初期共分散を使用
       outState.p01         = 0.0;
       outState.p11         = initial_p;
-      outState.regime      = REGIME_RANGE;
+      outState.regime      = KALMAN_REGIME_RANGE;
       outState.initialized = true;
 
       outSlope  = 0.0;
       outZScore = 0.0;
-      outRegime = REGIME_RANGE;
+      outRegime = KALMAN_REGIME_RANGE;
       return;
    }
 
@@ -313,26 +293,26 @@ void UpdateKalmanStepDynamic(const KalmanState &prevState,
    // 3. ヒステリシス状態遷移
    double current_regime = prevState.regime;
 
-   if(current_regime == REGIME_RANGE)
+   if(current_regime == KALMAN_REGIME_RANGE)
    {
       if(outZScore >= InpZEnter)
-         current_regime = REGIME_UP;
+         current_regime = KALMAN_REGIME_UP;
       else if(outZScore <= -InpZEnter)
-         current_regime = REGIME_DOWN;
+         current_regime = KALMAN_REGIME_DOWN;
    }
-   else if(current_regime == REGIME_UP)
+   else if(current_regime == KALMAN_REGIME_UP)
    {
       if(InpAllowDirectReversal && (outZScore <= -InpZEnter))
-         current_regime = REGIME_DOWN;
+         current_regime = KALMAN_REGIME_DOWN;
       else if(outZScore <= InpZExit)
-         current_regime = REGIME_RANGE;
+         current_regime = KALMAN_REGIME_RANGE;
    }
-   else if(current_regime == REGIME_DOWN)
+   else if(current_regime == KALMAN_REGIME_DOWN)
    {
       if(InpAllowDirectReversal && (outZScore >= InpZEnter))
-         current_regime = REGIME_UP;
+         current_regime = KALMAN_REGIME_UP;
       else if(outZScore >= -InpZExit)
-         current_regime = REGIME_RANGE;
+         current_regime = KALMAN_REGIME_RANGE;
    }
 
    outState.regime = current_regime;
@@ -450,13 +430,13 @@ int OnCalculate(const int rates_total,
 
          // --- [カルマンフィルター状態更新層（リアルタイム）] ---
          // 現在バーの最新価格 log_price を用いて毎ティック即座に応答計算
-         double slope = 0.0, zScore = 0.0, regime = REGIME_RANGE;
+         double slope = 0.0, zScore = 0.0, regime = KALMAN_REGIME_RANGE;
 
          if(i == 0)
          {
             KalmanState emptyState;
             emptyState.initialized = false;
-            emptyState.regime      = REGIME_RANGE;
+            emptyState.regime      = KALMAN_REGIME_RANGE;
             UpdateKalmanStepDynamic(emptyState, log_price, current_q_mu, current_q_beta, current_r, g_current_initial_p, StateHistory[i], slope, zScore, regime);
          }
          else
@@ -467,7 +447,7 @@ int OnCalculate(const int rates_total,
          BufferZScore[i] = zScore;
          BufferSlope[i]  = slope;
          BufferRegime[i] = regime;
-         BufferColor[i]  = (regime == REGIME_UP) ? COLOR_UP : (regime == REGIME_DOWN ? COLOR_DOWN : COLOR_RANGE);
+         BufferColor[i]  = (regime == KALMAN_REGIME_UP) ? KALMAN_COLOR_UP : (regime == KALMAN_REGIME_DOWN ? KALMAN_COLOR_DOWN : KALMAN_COLOR_RANGE);
       }
       return(rates_total);
    }
@@ -607,13 +587,13 @@ int OnCalculate(const int rates_total,
          current_q_beta = g_tf_cached_q_beta;
       }
 
-      double slope = 0.0, zScore = 0.0, regime = REGIME_RANGE;
+      double slope = 0.0, zScore = 0.0, regime = KALMAN_REGIME_RANGE;
 
       if(k == 0)
       {
          KalmanState emptyState;
          emptyState.initialized = false;
-         emptyState.regime      = REGIME_RANGE;
+         emptyState.regime      = KALMAN_REGIME_RANGE;
          UpdateKalmanStepDynamic(emptyState, log_price, current_q_mu, current_q_beta, current_r, g_tf_cached_initial_p, g_tf_state_history[k], slope, zScore, regime);
       }
       else
@@ -657,7 +637,7 @@ int OnCalculate(const int rates_total,
       BufferZScore[i] = g_tf_zscore_cache[tf_idx];
       BufferSlope[i]  = g_tf_slope_cache[tf_idx];
       BufferRegime[i] = regime;
-      BufferColor[i]  = (regime == REGIME_UP) ? COLOR_UP : (regime == REGIME_DOWN ? COLOR_DOWN : COLOR_RANGE);
+      BufferColor[i]  = (regime == KALMAN_REGIME_UP) ? KALMAN_COLOR_UP : (regime == KALMAN_REGIME_DOWN ? KALMAN_COLOR_DOWN : KALMAN_COLOR_RANGE);
    }
 
    return(rates_total);
