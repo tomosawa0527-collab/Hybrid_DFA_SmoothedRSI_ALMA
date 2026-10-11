@@ -45,9 +45,10 @@ graph TD
 ├── Indicators/
 │   └── Hybrid_DFA_EA/
 │       ├── KalmanRegimeEstimator.mq5 # 平滑トレンドモデル自律キャリブレーション型カルマンレジーム推定
-│       ├── DFA.mq5                   # 双方向DFAレジーム判別インディケータ (静的バッファ最適化済み)
+│       ├── MultiTrendMA.mq5          # マルチタイプ対応3ライン移動平均線 (SMA/EMA/SMMA/LWMA/ALMA)
 │       ├── SmoothedRSI.mq5           # 2-Pole Super Smoother 平滑化RSI
-│       └── MultiDualMA.mq5           # マルチタイプ対応デュアル移動平均線 (SMA/EMA/SMMA/LWMA/ALMA)
+│       └── old/
+│           └── DFA.mq5               # 旧双方向DFAレジーム判別インディケータ (アーカイブ)
 └── docs/
     ├── FX売買戦略仕様書（実運用完全版・カルマンフィルター統合版）.md # 実運用完全版仕様書
     ├── kalman_regime_estimator.md     # カルマンレジーム推定インジケーター技術仕様書
