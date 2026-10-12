@@ -37,9 +37,13 @@ input string            InpTradeComment         = "KalmanEnsemble"; // 注文コ
 input ulong             InpSlippage             = 10;             // 許容スリッページ (Points)
 input double            InpMaxSpreadPips        = 2.5;            // 許容最大スプレッド (Pips: 早朝スプレッド待機用)
 
+input group "=== カルマンレジーム タイムフレーム選択 ==="
+input ENUM_KALMAN_TF_MODE  InpKalmanTfMode         = KALMAN_TF_NEXT_HIGHER; // カルマン時間軸モード (自動上位足 / カレント / 手動)
+input ENUM_TIMEFRAMES      InpKalmanCustomTF       = PERIOD_D1;             // [手動指定時] カルマンタイムフレーム
+#define InpKalmanTF InpKalmanCustomTF // 後方互換用エイリアス
+
 input group "=== カルマンフィルター (KalmanRegimeEstimator) 設定 ==="
 input string            InpIndicatorPath        = DEFAULT_KALMAN_INDICATOR_PATH; // インジケーターパス
-input ENUM_TIMEFRAMES   InpKalmanTF             = PERIOD_D1;      // カルマン計算時間足 (仕様書標準: D1)
 input bool              InpIndAutoTimeframeScale= true;           // 時間足に応じたノイズ自動スケーリング
 input bool              InpIndAutoCalibration   = true;           // Rice推定量による解析的自動キャリブレーション
 input double            InpIndTargetLagBars     = 10.0;           // ターゲット時定数 (抽出スイング幅: 8〜15本推奨)
@@ -105,19 +109,27 @@ int h_atr14        = INVALID_HANDLE;
 int h_rsi14        = INVALID_HANDLE;
 
 // 実行制御変数
-datetime g_last_bar_time    = 0;
-int      g_cooldown_counter = 0;   // クールダウン残バー数
-bool     g_partial_closed   = false; // 部分利確済みフラグ
+datetime        g_last_bar_time    = 0;
+int             g_cooldown_counter = 0;   // クールダウン残バー数
+bool            g_partial_closed   = false; // 部分利確済みフラグ
+ENUM_TIMEFRAMES g_kalman_tf        = PERIOD_D1; // 実効カルマン時間軸
 
 //+------------------------------------------------------------------+
 //| カルマンインジケーターハンドル生成ヘルパー                       |
 //+------------------------------------------------------------------+
 int CreateKalmanIndicatorHandle(const string indicator_path)
 {
+   if(InpKalmanTfMode == KALMAN_TF_NEXT_HIGHER)
+      g_kalman_tf = GetNextHigherTimeframe(_Period);
+   else if(InpKalmanTfMode == KALMAN_TF_CURRENT)
+      g_kalman_tf = _Period;
+   else if(InpKalmanTfMode == KALMAN_TF_MANUAL)
+      g_kalman_tf = (InpKalmanCustomTF == PERIOD_CURRENT) ? _Period : InpKalmanCustomTF;
+
    return iCustom(_Symbol, _Period, indicator_path,
                   // --- Group 1: マルチタイムフレーム (MTF) 設定 ---
                   "=== マルチタイムフレーム (MTF) 設定 ===",
-                  InpKalmanTF,
+                  g_kalman_tf,
                   InpIndAutoTimeframeScale,
 
                   // --- Group 2: 確定足動的キャリブレーション (完全因果的・先読みゼロ) ---
@@ -251,8 +263,8 @@ int OnInit()
    g_cooldown_counter = 0;
    g_partial_closed   = false;
 
-   PrintFormat("[+] KalmanTrendEnsembleEA 初期化成功 | Symbol: %s | 執行足: %s | カルマン足: %s | Magic: %d | Risk: %.1f%%",
-               _Symbol, EnumToString(_Period), EnumToString(InpKalmanTF), InpMagicNumber, InpRiskPercent);
+   PrintFormat("[+] KalmanTrendEnsembleEA 初期化成功 | Symbol: %s | 執行足: %s | カルマン足: %s (モード: %s) | Magic: %d | Risk: %.1f%%",
+               _Symbol, EnumToString(_Period), EnumToString(g_kalman_tf), EnumToString(InpKalmanTfMode), InpMagicNumber, InpRiskPercent);
 
    return(INIT_SUCCEEDED);
 }

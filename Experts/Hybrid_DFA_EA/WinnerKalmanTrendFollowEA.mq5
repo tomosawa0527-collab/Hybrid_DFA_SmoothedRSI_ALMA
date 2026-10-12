@@ -20,12 +20,15 @@ int g_atr_slow_handle = INVALID_HANDLE;
 int g_rsi_handle      = INVALID_HANDLE;
 
 //--- カルマン時間軸モード定義
+#ifndef _ENUM_KALMAN_TF_MODE_DEFINED_
+#define _ENUM_KALMAN_TF_MODE_DEFINED_
 enum ENUM_KALMAN_TF_MODE
 {
    KALMAN_TF_NEXT_HIGHER = 0, // 1つ上位足 (自動判別: H1->H4, M15->H1, H4->D1 推奨)
    KALMAN_TF_CURRENT     = 1, // カレント足 (執行足と同一時間軸)
    KALMAN_TF_MANUAL      = 2  // 手動明示指定 (下記 InpKalmanCustomTF を使用)
 };
+#endif
 
 //--- システム状態管理構造体
 struct SystemState
