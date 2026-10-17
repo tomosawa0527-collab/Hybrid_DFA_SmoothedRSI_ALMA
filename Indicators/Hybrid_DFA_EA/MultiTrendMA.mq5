@@ -54,15 +54,6 @@ input double InpAlmaMidSigma   = 5.5;                       // [Mid ALMA] Sigma 
 input double InpAlmaSlowOffset = 0.90;                      // [Slow ALMA] Offset (0.0〜1.0)
 input double InpAlmaSlowSigma  = 5.5;                       // [Slow ALMA] Sigma (1.0〜10.0)
 
-input group "=== 高度フィルター設定 (オプション) ==="
-input bool   InpUseSuperSmoother   = false;                 // 2-Pole SuperSmoother有効化 (OFF推奨)
-input int    InpSSCutoff           = 4;                     // 高周波カットオフ周期 (bars: 4推奨)
-input bool   InpUseZeroLagLead     = false;                 // 先行モメンタム補正有効化
-input double InpLeadFactor         = 0.40;                  // 先行モメンタム係数 (0.1〜1.0)
-input bool   InpUseSchmittTrigger  = false;                 // ATR連動シュミットトリガー有効化 (Fast vs Slow)
-input int    InpHysteresisAtrPeriod= 20;                    // ヒステリシス用ATR期間
-input double InpHysteresisFactor   = 0.08;                  // 不感帯幅係数 (ATR比率)
-
 //--- インジケータバッファ配列
 double BufferFast[];
 double BufferMid[];
@@ -70,10 +61,7 @@ double BufferSlow[];
 double BufferPreFiltered[];
 double BufferSignalState[]; // +1.0: Bullish, -1.0: Bearish, 0.0: Neutral
 double BufferATR[];
-double BufferSS[];          // SuperSmoother 独立内部バッファ
-
-//--- SuperSmoother 内部キャッシュ係数
-double ss_c1, ss_c2, ss_c3;
+double BufferSS[];          // 内部バッファ
 
 //--- 計算対象タイムフレーム
 ENUM_TIMEFRAMES g_calc_tf = PERIOD_CURRENT;
@@ -262,36 +250,8 @@ int OnInit()
      return(INIT_PARAMETERS_INCORRECT);
   }
 
-  // ATR計算用期間のサニタイズ（ゼロ除算防止：最小1）
-  m_atrPeriod = MathMax(1, InpHysteresisAtrPeriod);
-
-  // パラメータ検証: オプション有効時のみ厳密にチェック
-  if(InpUseSuperSmoother && InpSSCutoff < 2)
-  {
-     PrintFormat("[MultiTrendMA] 初期化エラー: SSCutoff は2以上に設定してください (SSCutoff=%d)。", InpSSCutoff);
-     return(INIT_PARAMETERS_INCORRECT);
-  }
-
-  if(InpUseZeroLagLead && InpLeadFactor < 0.0)
-  {
-     PrintFormat("[MultiTrendMA] 初期化エラー: LeadFactor は0.0以上に設定してください (LeadFactor=%.2f)。", InpLeadFactor);
-     return(INIT_PARAMETERS_INCORRECT);
-  }
-
-  if(InpUseSchmittTrigger && (InpHysteresisAtrPeriod < 1 || InpHysteresisFactor < 0.0))
-  {
-     PrintFormat("[MultiTrendMA] 初期化エラー: シュミットトリガー設定が不正です (AtrPeriod=%d, Factor=%.4f)。",
-                 InpHysteresisAtrPeriod, InpHysteresisFactor);
-     return(INIT_PARAMETERS_INCORRECT);
-  }
-
-  // SuperSmoother 係数初期化 (2-Pole Butterworth 低遅延設計)
-  int cutoff = (InpSSCutoff >= 2) ? InpSSCutoff : 4;
-  double ss_a1 = MathExp(-1.414213562 * M_PI / (double)cutoff);
-  double ss_b1 = 2.0 * ss_a1 * MathCos(1.414213562 * M_PI / (double)cutoff);
-  ss_c2 = ss_b1;
-  ss_c3 = -ss_a1 * ss_a1;
-  ss_c1 = 1.0 - ss_c2 - ss_c3;
+  // ATR計算用期間の初期化（標準14）
+  m_atrPeriod = 14;
 
   PrintFormat("[MultiTrendMA] 初期化成功: TF=%s Fast=[%s %d] Mid=[%s %d] Slow=[%s %d] MaxWin=%d AtrPeriod=%d Price=%d",
               EnumToString(g_calc_tf),
@@ -416,34 +376,10 @@ int OnCalculate(const int rates_total,
      for(int i = start; i < rates_total; i++)
      {
         double rawPrice = GetAppliedPrice(i, open, high, low, close);
+        BufferSS[i] = rawPrice;
+        BufferPreFiltered[i] = rawPrice;
 
-        // 1. SuperSmoother による高周波ジッター遮断 (オプション)
-        double clean = rawPrice;
-        if(InpUseSuperSmoother)
-        {
-           if(i >= 2)
-           {
-              double prevRaw = GetAppliedPrice(i - 1, open, high, low, close);
-              clean = ss_c1 * (rawPrice + prevRaw) * 0.5 +
-                      ss_c2 * BufferSS[i - 1] +
-                      ss_c3 * BufferSS[i - 2];
-           }
-           else if(i == 1)
-           {
-              clean = (rawPrice + GetAppliedPrice(0, open, high, low, close)) * 0.5;
-           }
-        }
-        BufferSS[i] = clean;
-
-        // 2. 先行モメンタム補正 (Zero-Lag Feedforward: オプション)
-        double prefiltered = clean;
-        if(InpUseZeroLagLead && i >= 1)
-        {
-           prefiltered += InpLeadFactor * (BufferSS[i] - BufferSS[i - 1]);
-        }
-        BufferPreFiltered[i] = prefiltered;
-
-        // 3. 移動平均計算 (Fast, Mid, Slow)
+        // 1. 移動平均計算 (Fast, Mid, Slow)
         double prevFast = (i > 0) ? BufferFast[i - 1] : EMPTY_VALUE;
         double prevMid  = (i > 0) ? BufferMid[i - 1]  : EMPTY_VALUE;
         double prevSlow = (i > 0) ? BufferSlow[i - 1] : EMPTY_VALUE;
@@ -452,7 +388,7 @@ int OnCalculate(const int rates_total,
         BufferMid[i]  = CalculateMaBar(m_cfgMid,  i, BufferPreFiltered, prevMid);
         BufferSlow[i] = CalculateMaBar(m_cfgSlow, i, BufferPreFiltered, prevSlow);
 
-        // 4. True Range & ATR 計算
+        // 2. True Range & ATR 計算
         double tr = high[i] - low[i];
         if(i > 0)
         {
@@ -477,29 +413,16 @@ int OnCalculate(const int rates_total,
         }
         BufferATR[i] = curAtr;
 
-        // 5. シグナル状態判定 (Fast vs Slow: シュミットトリガーまたは直接クロス)
+        // 3. シグナル状態判定 (Fast vs Slow: 直接クロス)
         if(BufferFast[i] != EMPTY_VALUE && BufferSlow[i] != EMPTY_VALUE)
         {
            double diff = BufferFast[i] - BufferSlow[i];
-           if(InpUseSchmittTrigger)
-           {
-              double h_band = curAtr * InpHysteresisFactor;
-              if(diff > h_band)
-                 BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_BULLISH;
-              else if(diff < -h_band)
-                 BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_BEARISH;
-              else
-                 BufferSignalState[i] = (i > 0) ? BufferSignalState[i - 1] : MULTI_TREND_MA_SIGNAL_NEUTRAL;
-           }
+           if(diff > 0.0)
+              BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_BULLISH;
+           else if(diff < 0.0)
+              BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_BEARISH;
            else
-           {
-              if(diff > 0.0)
-                 BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_BULLISH;
-              else if(diff < 0.0)
-                 BufferSignalState[i] = MULTI_TREND_MA_SIGNAL_BEARISH;
-              else
-                 BufferSignalState[i] = (i > 0) ? BufferSignalState[i - 1] : MULTI_TREND_MA_SIGNAL_NEUTRAL;
-           }
+              BufferSignalState[i] = (i > 0) ? BufferSignalState[i - 1] : MULTI_TREND_MA_SIGNAL_NEUTRAL;
         }
         else
         {
@@ -592,34 +515,10 @@ int OnCalculate(const int rates_total,
   for(int k = tf_start; k < tf_rates_total && !IsStopped(); k++)
   {
      double rawPrice = GetAppliedPriceFromRate(g_tf_rates[k], InpAppliedPrice);
+     g_tf_ss_cache[k] = rawPrice;
+     g_tf_prefiltered_cache[k] = rawPrice;
 
-     // 1. SuperSmoother
-     double clean = rawPrice;
-     if(InpUseSuperSmoother)
-     {
-        if(k >= 2)
-        {
-           double prevRaw = GetAppliedPriceFromRate(g_tf_rates[k - 1], InpAppliedPrice);
-           clean = ss_c1 * (rawPrice + prevRaw) * 0.5 +
-                   ss_c2 * g_tf_ss_cache[k - 1] +
-                   ss_c3 * g_tf_ss_cache[k - 2];
-        }
-        else if(k == 1)
-        {
-           clean = (rawPrice + GetAppliedPriceFromRate(g_tf_rates[0], InpAppliedPrice)) * 0.5;
-        }
-     }
-     g_tf_ss_cache[k] = clean;
-
-     // 2. 先行モメンタム補正 (Zero-Lag Feedforward: オプション)
-     double prefiltered = clean;
-     if(InpUseZeroLagLead && k >= 1)
-     {
-        prefiltered += InpLeadFactor * (g_tf_ss_cache[k] - g_tf_ss_cache[k - 1]);
-     }
-     g_tf_prefiltered_cache[k] = prefiltered;
-
-     // 3. 移動平均計算 (Fast, Mid, Slow)
+     // 1. 移動平均計算 (Fast, Mid, Slow)
      double prevFast = (k > 0) ? g_tf_fast_cache[k - 1] : EMPTY_VALUE;
      double prevMid  = (k > 0) ? g_tf_mid_cache[k - 1]  : EMPTY_VALUE;
      double prevSlow = (k > 0) ? g_tf_slow_cache[k - 1] : EMPTY_VALUE;
@@ -628,7 +527,7 @@ int OnCalculate(const int rates_total,
      g_tf_mid_cache[k]  = CalculateMaBar(m_cfgMid,  k, g_tf_prefiltered_cache, prevMid);
      g_tf_slow_cache[k] = CalculateMaBar(m_cfgSlow, k, g_tf_prefiltered_cache, prevSlow);
 
-     // 4. True Range & ATR 計算
+     // 2. True Range & ATR 計算
      double tr = g_tf_rates[k].high - g_tf_rates[k].low;
      if(k > 0)
      {
@@ -653,29 +552,16 @@ int OnCalculate(const int rates_total,
      }
      g_tf_atr_cache[k] = curAtr;
 
-     // 5. シグナル状態判定
+     // 3. シグナル状態判定 (直接クロス)
      if(g_tf_fast_cache[k] != EMPTY_VALUE && g_tf_slow_cache[k] != EMPTY_VALUE)
      {
         double diff = g_tf_fast_cache[k] - g_tf_slow_cache[k];
-        if(InpUseSchmittTrigger)
-        {
-           double h_band = curAtr * InpHysteresisFactor;
-           if(diff > h_band)
-              g_tf_signal_cache[k] = MULTI_TREND_MA_SIGNAL_BULLISH;
-           else if(diff < -h_band)
-              g_tf_signal_cache[k] = MULTI_TREND_MA_SIGNAL_BEARISH;
-           else
-              g_tf_signal_cache[k] = (k > 0) ? g_tf_signal_cache[k - 1] : MULTI_TREND_MA_SIGNAL_NEUTRAL;
-        }
+        if(diff > 0.0)
+           g_tf_signal_cache[k] = MULTI_TREND_MA_SIGNAL_BULLISH;
+        else if(diff < 0.0)
+           g_tf_signal_cache[k] = MULTI_TREND_MA_SIGNAL_BEARISH;
         else
-        {
-           if(diff > 0.0)
-              g_tf_signal_cache[k] = MULTI_TREND_MA_SIGNAL_BULLISH;
-           else if(diff < 0.0)
-              g_tf_signal_cache[k] = MULTI_TREND_MA_SIGNAL_BEARISH;
-           else
-              g_tf_signal_cache[k] = (k > 0) ? g_tf_signal_cache[k - 1] : MULTI_TREND_MA_SIGNAL_NEUTRAL;
-        }
+           g_tf_signal_cache[k] = (k > 0) ? g_tf_signal_cache[k - 1] : MULTI_TREND_MA_SIGNAL_NEUTRAL;
      }
      else
      {

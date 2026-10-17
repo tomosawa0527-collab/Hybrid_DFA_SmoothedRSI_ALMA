@@ -63,13 +63,6 @@ input double InpAlmaFastOffset = 0.92;                                      // [
 input double InpAlmaSlowOffset = 0.90;                                      // [ALMA] 長期 Offset (高値ほど低遅延)
 input double InpAlmaFastSigma = 5.5;                                        // [ALMA] 短期 Sigma
 input double InpAlmaSlowSigma = 5.5;                                        // [ALMA] 長期 Sigma
-input bool InpAlmaUseSuperSmoother = false;                                 // [ALMA] SuperSmoother 前処理 (OFF推奨)
-input int InpAlmaSSCutoff = 4;                                              // [ALMA] SS カットオフ周期 (bars)
-input bool InpAlmaUseZeroLagLead = false;                                   // [ALMA] 先行モメンタム補正有効化
-input double InpAlmaLeadFactor = 0.40;                                      // [ALMA] 先行モメンタム係数
-input bool InpAlmaUseSchmittTrigger = false;                                // [ALMA] シュミットトリガー (ヒステリシス) 有効化
-input int InpAlmaHysteresisAtrPeriod = 14;                                  // [ALMA] ヒステリシス用 ATR 期間
-input double InpAlmaHysteresisFactor = 0.08;                                // [ALMA] ヒステリシス幅係数 (ATR比率)
 
 //--- 出口戦略 (ATR Risk Management)
 input group "=== 出口戦略 (ATR) ==="
@@ -203,9 +196,8 @@ int OnInit() {
         case TREND_MA_ALMA: maTypeName = "ALMA"; break;
         }
 
-        PrintFormat("[Hybrid_DFA_EA] トレンドMAハンドル生成開始: Type=%s, Fast=%d, Slow=%d, Price=%d, ST=%s(HFactor=%.4f)",
-                    maTypeName, InpMaFastWindow, InpMaSlowWindow, (int)InpMaAppliedPrice,
-                    InpAlmaUseSchmittTrigger ? "ON" : "OFF", InpAlmaHysteresisFactor);
+        PrintFormat("[Hybrid_DFA_EA] トレンドMAハンドル生成開始: Type=%s, Fast=%d, Slow=%d, Price=%d",
+                    maTypeName, InpMaFastWindow, InpMaSlowWindow, (int)InpMaAppliedPrice);
 
         h_multiDualMa =
             iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\MultiTrendMA",
@@ -219,11 +211,7 @@ int OnInit() {
                     "=== ALMA 専用パラメータ ===",
                     InpAlmaFastOffset, InpAlmaFastSigma,
                     InpAlmaFastOffset, InpAlmaFastSigma,
-                    InpAlmaSlowOffset, InpAlmaSlowSigma,
-                    "=== 高度フィルター設定 (オプション) ===",
-                    InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
-                    InpAlmaUseZeroLagLead, InpAlmaLeadFactor,
-                    InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
+                    InpAlmaSlowOffset, InpAlmaSlowSigma);
         if (h_multiDualMa == INVALID_HANDLE) {
             h_multiDualMa =
                 iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\MultiTrendMA",
@@ -237,11 +225,7 @@ int OnInit() {
                         "=== ALMA 専用パラメータ ===",
                         InpAlmaFastOffset, InpAlmaFastSigma,
                         InpAlmaFastOffset, InpAlmaFastSigma,
-                        InpAlmaSlowOffset, InpAlmaSlowSigma,
-                        "=== 高度フィルター設定 (オプション) ===",
-                        InpAlmaUseSuperSmoother, InpAlmaSSCutoff,
-                        InpAlmaUseZeroLagLead, InpAlmaLeadFactor,
-                        InpAlmaUseSchmittTrigger, InpAlmaHysteresisAtrPeriod, InpAlmaHysteresisFactor);
+                        InpAlmaSlowOffset, InpAlmaSlowSigma);
         }
         if (h_multiDualMa == INVALID_HANDLE) {
             Print("[Hybrid_DFA_EA] MultiTrendMA インディケータのハンドル取得に失敗しました。");
@@ -672,27 +656,15 @@ void OnTick() {
     if (InpUseTrendStrategy) {
         bool shouldCloseBuy = false;
         bool shouldCloseSell = false;
-        bool useSchmitt = (InpTrendMaType == TREND_MA_ALMA && InpAlmaUseSchmittTrigger);
 
-        if (useSchmitt) {
-            // シュミットトリガー有効時: SignalState が弱気(-1.0)に転換した場合にBUY決済
-            if (trendBuys > 0 && state.alma_signal_1 < 0.0) {
-                shouldCloseBuy = true;
-            }
-            // SignalState が強気(+1.0)に転換した場合にSELL決済
-            if (trendSells > 0 && state.alma_signal_1 > 0.0) {
-                shouldCloseSell = true;
-            }
-        } else {
-            // 従来の直接クロス判定 (SMA / EMA / 通常ALMA)
-            if (trendBuys > 0 && state.alma_fast_2 >= state.alma_slow_2 &&
-                state.alma_fast_1 < state.alma_slow_1) {
-                shouldCloseBuy = true;
-            }
-            if (trendSells > 0 && state.alma_fast_2 <= state.alma_slow_2 &&
-                state.alma_fast_1 > state.alma_slow_1) {
-                shouldCloseSell = true;
-            }
+        // 直接クロス判定
+        if (trendBuys > 0 && state.alma_fast_2 >= state.alma_slow_2 &&
+            state.alma_fast_1 < state.alma_slow_1) {
+            shouldCloseBuy = true;
+        }
+        if (trendSells > 0 && state.alma_fast_2 <= state.alma_slow_2 &&
+            state.alma_fast_1 > state.alma_slow_1) {
+            shouldCloseSell = true;
         }
 
         if (shouldCloseBuy) {
@@ -753,27 +725,15 @@ void OnTick() {
     if (InpUseTrendStrategy) {
         bool signalBuy = false;
         bool signalSell = false;
-        bool useSchmitt = (InpTrendMaType == TREND_MA_ALMA && InpAlmaUseSchmittTrigger);
 
-        if (useSchmitt) {
-            // シュミットトリガー有効時: 非強気 (<= 0.0) から 強気 (+1.0) へのブレイクアウトでBUY
-            if (state.alma_signal_2 <= 0.0 && state.alma_signal_1 > 0.0) {
-                signalBuy = true;
-            }
-            // 非弱気 (>= 0.0) から 弱気 (-1.0) へのブレイクダウンでSELL
-            else if (state.alma_signal_2 >= 0.0 && state.alma_signal_1 < 0.0) {
-                signalSell = true;
-            }
-        } else {
-            // 従来の直接クロス判定 (SMA / EMA / 通常ALMA)
-            if (state.alma_fast_2 <= state.alma_slow_2 &&
-                state.alma_fast_1 > state.alma_slow_1) {
-                signalBuy = true;
-            }
-            else if (state.alma_fast_2 >= state.alma_slow_2 &&
-                     state.alma_fast_1 < state.alma_slow_1) {
-                signalSell = true;
-            }
+        // 直接クロス判定
+        if (state.alma_fast_2 <= state.alma_slow_2 &&
+            state.alma_fast_1 > state.alma_slow_1) {
+            signalBuy = true;
+        }
+        else if (state.alma_fast_2 >= state.alma_slow_2 &&
+                 state.alma_fast_1 < state.alma_slow_1) {
+            signalSell = true;
         }
 
         if (signalBuy && allowTrendBuy) {
