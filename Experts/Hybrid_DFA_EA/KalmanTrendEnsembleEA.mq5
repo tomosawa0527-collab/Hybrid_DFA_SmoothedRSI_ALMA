@@ -37,12 +37,9 @@ input string            InpTradeComment         = "KalmanEnsemble"; // 注文コ
 input ulong             InpSlippage             = 10;             // 許容スリッページ (Points)
 input double            InpMaxSpreadPips        = 2.5;            // 許容最大スプレッド (Pips: 早朝スプレッド待機用)
 
-input group "=== カルマンレジーム タイムフレーム選択 ==="
-input ENUM_KALMAN_TF_MODE  InpKalmanTfMode         = KALMAN_TF_NEXT_HIGHER; // カルマン時間軸モード (自動上位足 / カレント / 手動)
-input ENUM_TIMEFRAMES      InpKalmanCustomTF       = PERIOD_D1;             // [手動指定時] カルマンタイムフレーム
-#define InpKalmanTF InpKalmanCustomTF // 後方互換用エイリアス
-
 input group "=== カルマンフィルター (KalmanRegimeEstimator) 設定 ==="
+input ENUM_HTF_MODE     InpKalmanTimeframeMode  = HTF_MODE_AUTO_NEXT;     // カルマン計算時間軸 (デフォルト: 1段階上位足)
+#define InpKalmanTfMode InpKalmanTimeframeMode // 後方互換用エイリアス
 input string            InpIndicatorPath        = DEFAULT_KALMAN_INDICATOR_PATH; // インジケーターパス
 input bool              InpIndAutoTimeframeScale= true;           // 時間足に応じたノイズ自動スケーリング
 input bool              InpIndAutoCalibration   = true;           // Rice推定量による解析的自動キャリブレーション
@@ -119,12 +116,7 @@ ENUM_TIMEFRAMES g_kalman_tf        = PERIOD_D1; // 実効カルマン時間軸
 //+------------------------------------------------------------------+
 int CreateKalmanIndicatorHandle(const string indicator_path)
 {
-   if(InpKalmanTfMode == KALMAN_TF_NEXT_HIGHER)
-      g_kalman_tf = GetNextHigherTimeframe(_Period);
-   else if(InpKalmanTfMode == KALMAN_TF_CURRENT)
-      g_kalman_tf = _Period;
-   else if(InpKalmanTfMode == KALMAN_TF_MANUAL)
-      g_kalman_tf = (InpKalmanCustomTF == PERIOD_CURRENT) ? _Period : InpKalmanCustomTF;
+   g_kalman_tf = ResolveTimeframe(InpKalmanTimeframeMode, _Period);
 
    return iCustom(_Symbol, _Period, indicator_path,
                   // --- Group 1: マルチタイムフレーム (MTF) 設定 ---
@@ -264,7 +256,7 @@ int OnInit()
    g_partial_closed   = false;
 
    PrintFormat("[+] KalmanTrendEnsembleEA 初期化成功 | Symbol: %s | 執行足: %s | カルマン足: %s (モード: %s) | Magic: %d | Risk: %.1f%%",
-               _Symbol, EnumToString(_Period), EnumToString(g_kalman_tf), EnumToString(InpKalmanTfMode), InpMagicNumber, InpRiskPercent);
+               _Symbol, EnumToString(_Period), EnumToString(g_kalman_tf), EnumToString(InpKalmanTimeframeMode), InpMagicNumber, InpRiskPercent);
 
    return(INIT_SUCCEEDED);
 }

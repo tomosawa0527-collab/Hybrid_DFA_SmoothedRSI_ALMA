@@ -19,16 +19,6 @@ int g_atr_fast_handle = INVALID_HANDLE;
 int g_atr_slow_handle = INVALID_HANDLE;
 int g_rsi_handle      = INVALID_HANDLE;
 
-//--- カルマン時間軸モード定義
-#ifndef _ENUM_KALMAN_TF_MODE_DEFINED_
-#define _ENUM_KALMAN_TF_MODE_DEFINED_
-enum ENUM_KALMAN_TF_MODE
-{
-   KALMAN_TF_NEXT_HIGHER = 0, // 1つ上位足 (自動判別: H1->H4, M15->H1, H4->D1 推奨)
-   KALMAN_TF_CURRENT     = 1, // カレント足 (執行足と同一時間軸)
-   KALMAN_TF_MANUAL      = 2  // 手動明示指定 (下記 InpKalmanCustomTF を使用)
-};
-#endif
 
 //--- システム状態管理構造体
 struct SystemState
@@ -61,11 +51,9 @@ input ulong                InpMagicNumber             = 20260328;              /
 input double               InpRiskPercent             = 1.0;                   // リスク許容率 (%)
 input ENUM_TIMEFRAMES      InpSystemTF                = PERIOD_CURRENT;        // 執行・移動平均線 タイムフレーム (カレント足推奨)
 
-input group "=== カルマンレジーム タイムフレーム選択 ==="
-input ENUM_KALMAN_TF_MODE  InpKalmanTfMode            = KALMAN_TF_NEXT_HIGHER; // カルマン時間軸モード (自動上位足 / カレント / 手動)
-input ENUM_TIMEFRAMES      InpKalmanCustomTF          = PERIOD_H4;             // [手動指定時] カルマンタイムフレーム
-
 input group "=== カルマンレジーム推定器設定 ==="
+input ENUM_HTF_MODE        InpKalmanTimeframeMode     = HTF_MODE_AUTO_NEXT;    // カルマン計算時間軸 (デフォルト: 1段階上位足)
+#define InpKalmanTfMode InpKalmanTimeframeMode // 後方互換用エイリアス
 input bool                 InpKalmanAutoCalib         = true;                  // カルマン自動キャリブレーション (false: 固定値, true: 動的計測_Rice推定版なので推奨)
 input double               InpTargetLagBars           = 10.0;                  // カルマン時定数 (tau: Auto時のみ有効)
 input int                  InpRollingWindow           = 200;                   // ローリング観測窓長 W (100〜250推奨)
@@ -233,14 +221,7 @@ int CreateKalmanHandle()
    candidates[3] = "KalmanRegimeEstimator";
 
    ENUM_TIMEFRAMES exec_tf = (InpSystemTF == PERIOD_CURRENT) ? _Period : InpSystemTF;
-   ENUM_TIMEFRAMES k_tf    = exec_tf;
-
-   if(InpKalmanTfMode == KALMAN_TF_NEXT_HIGHER)
-      k_tf = GetNextHigherTimeframe(exec_tf);
-   else if(InpKalmanTfMode == KALMAN_TF_CURRENT)
-      k_tf = exec_tf;
-   else if(InpKalmanTfMode == KALMAN_TF_MANUAL)
-      k_tf = (InpKalmanCustomTF == PERIOD_CURRENT) ? exec_tf : InpKalmanCustomTF;
+   ENUM_TIMEFRAMES k_tf    = ResolveTimeframe(InpKalmanTimeframeMode, exec_tf);
 
    double q_beta = StringToDouble(InpKalmanQBeta);
    double r      = StringToDouble(InpKalmanR);
@@ -273,12 +254,12 @@ int CreateKalmanHandle()
                       "=== レジーム判定 (ヒステリシス) パラメータ ===",
                       InpZEnter,
                       InpZExit,
-                      true, // InpAllowDirectReversal
+                      true, // インジケーター側の急反転許可
                       PRICE_CLOSE);
       if(h != INVALID_HANDLE)
       {
          PrintFormat("[+] KalmanRegimeEstimator ハンドル取得成功: '%s' (執行足: %s, カルマン足: %s, モード: %s, AutoCalib: %s, q_beta: %.3e [%s], R: %.3e [%s])",
-                     candidates[i], EnumToString(exec_tf), EnumToString(k_tf), EnumToString(InpKalmanTfMode),
+                     candidates[i], EnumToString(exec_tf), EnumToString(k_tf), EnumToString(InpKalmanTimeframeMode),
                      InpKalmanAutoCalib ? "true" : "false", q_beta, InpKalmanQBeta, r, InpKalmanR);
          return(h);
       }
