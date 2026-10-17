@@ -47,12 +47,18 @@ input ENUM_MA_PERIOD     InpSlowWindow     = MA_PERIOD_89;  // [Slow] 期間 (0�
 input ENUM_APPLIED_PRICE InpAppliedPrice   = PRICE_CLOSE;   // 適用価格
 
 input group "=== ALMA 専用パラメータ ==="
-input double InpAlmaFastOffset = 0.92;                      // [Fast ALMA] Offset (0.0〜1.0)
-input double InpAlmaFastSigma  = 5.5;                       // [Fast ALMA] Sigma (1.0〜10.0)
-input double InpAlmaMidOffset  = 0.91;                      // [Mid ALMA] Offset (0.0〜1.0)
-input double InpAlmaMidSigma   = 5.5;                       // [Mid ALMA] Sigma (1.0〜10.0)
-input double InpAlmaSlowOffset = 0.90;                      // [Slow ALMA] Offset (0.0〜1.0)
-input double InpAlmaSlowSigma  = 5.5;                       // [Slow ALMA] Sigma (1.0〜10.0)
+input bool   InpAlmaAutoAdaptive    = true;            // ALMAパラメータ自動適応化 (動的推定)
+input int    InpAlmaRollingWindow   = 100;             // ローリング観測窓長 W (確定足 30〜250推奨)
+input double InpAlmaOffsetMin       = 0.70;            // [自動時] 最小 Offset (レンジ相場用)
+input double InpAlmaOffsetMax       = 0.95;            // [自動時] 最大 Offset (トレンド相場用)
+input double InpAlmaSigmaMin        = 4.5;             // [自動時] 最小 Sigma (広帯域・強力平滑化)
+input double InpAlmaSigmaMax        = 7.5;             // [自動時] 最大 Sigma (狭帯域・鋭敏追従)
+input double InpAlmaFastOffset      = 0.92;            // [手動時] Fast ALMA Offset (0.0〜1.0)
+input double InpAlmaFastSigma       = 5.5;             // [手動時] Fast ALMA Sigma (1.0〜10.0)
+input double InpAlmaMidOffset       = 0.91;            // [手動時] Mid ALMA Offset (0.0〜1.0)
+input double InpAlmaMidSigma        = 5.5;             // [手動時] Mid ALMA Sigma (1.0〜10.0)
+input double InpAlmaSlowOffset      = 0.90;            // [手動時] Slow ALMA Offset (0.0〜1.0)
+input double InpAlmaSlowSigma       = 5.5;             // [手動時] Slow ALMA Sigma (1.0〜10.0)
 
 //--- インジケータバッファ配列
 double BufferFast[];
@@ -250,15 +256,39 @@ int OnInit()
      return(INIT_PARAMETERS_INCORRECT);
   }
 
+  // パラメータ検証: ALMA自動適応設定
+  if(InpAlmaAutoAdaptive)
+  {
+     if(InpAlmaRollingWindow < 5)
+     {
+        PrintFormat("[MultiTrendMA] 初期化エラー: InpAlmaRollingWindow は 5 以上を指定してください (現在値: %d)。", InpAlmaRollingWindow);
+        return(INIT_PARAMETERS_INCORRECT);
+     }
+     if(InpAlmaOffsetMin < 0.0 || InpAlmaOffsetMax > 1.0 || InpAlmaOffsetMin > InpAlmaOffsetMax)
+     {
+        PrintFormat("[MultiTrendMA] 初期化エラー: InpAlmaOffsetMin/Max は 0.0〜1.0 かつ Min <= Max である必要があります (Min=%.2f, Max=%.2f)。",
+                    InpAlmaOffsetMin, InpAlmaOffsetMax);
+        return(INIT_PARAMETERS_INCORRECT);
+     }
+     if(InpAlmaSigmaMin <= 0.0 || InpAlmaSigmaMax <= 0.0 || InpAlmaSigmaMin > InpAlmaSigmaMax)
+     {
+        PrintFormat("[MultiTrendMA] 初期化エラー: インジケーター Sigma は正の値かつ Min <= Max である必要があります (Min=%.2f, Max=%.2f)。",
+                    InpAlmaSigmaMin, InpAlmaSigmaMax);
+        return(INIT_PARAMETERS_INCORRECT);
+     }
+  }
+
   // ATR計算用期間の初期化（標準14）
   m_atrPeriod = 14;
 
-  PrintFormat("[MultiTrendMA] 初期化成功: TF=%s Fast=[%s %d] Mid=[%s %d] Slow=[%s %d] MaxWin=%d AtrPeriod=%d Price=%d",
+  PrintFormat("[MultiTrendMA] 初期化成功: TF=%s Fast=[%s %d] Mid=[%s %d] Slow=[%s %d] MaxWin=%d ALMA_Adaptive=%s(W=%d, Offset=%.2f-%.2f, Sigma=%.1f-%.1f)",
               EnumToString(g_calc_tf),
               GetMaTypeName(InpFastMaType), InpFastWindow,
               GetMaTypeName(InpMidMaType), InpMidWindow,
               GetMaTypeName(InpSlowMaType), InpSlowWindow,
-              m_maxWindow, m_atrPeriod, (int)InpAppliedPrice);
+              m_maxWindow,
+              InpAlmaAutoAdaptive ? "ON" : "OFF", InpAlmaRollingWindow,
+              InpAlmaOffsetMin, InpAlmaOffsetMax, InpAlmaSigmaMin, InpAlmaSigmaMax);
 
   return(INIT_SUCCEEDED);
 }
@@ -301,12 +331,56 @@ double GetAppliedPriceFromRate(const MqlRates &rate, const ENUM_APPLIED_PRICE pr
 }
 
 //+------------------------------------------------------------------+
-//| 単一MAの逐次計算ヘルパー                                         |
+//| カウフマン効率比 (KER) に基づく動的ALMAパラメータ推定関数       |
+//+------------------------------------------------------------------+
+void EstimateAdaptiveAlmaParams(const int eval_idx,
+                                const double &prices[],
+                                const int rolling_window,
+                                const double offset_min,
+                                const double offset_max,
+                                const double sigma_min,
+                                const double sigma_max,
+                                double &out_offset,
+                                double &out_sigma)
+{
+   if(eval_idx < rolling_window)
+   {
+      // 窓幅に満たない初期期間は中央値でフォールバック
+      out_offset = (offset_min + offset_max) * 0.5;
+      out_sigma  = (sigma_min + sigma_max) * 0.5;
+      return;
+   }
+
+   // 1. 純移動量 (Net Change)
+   double net_change = MathAbs(prices[eval_idx] - prices[eval_idx - rolling_window]);
+
+   // 2. 総経路長 (Total Path Length)
+   double total_path = 0.0;
+   for(int j = 0; j < rolling_window; j++)
+   {
+      total_path += MathAbs(prices[eval_idx - j] - prices[eval_idx - j - 1]);
+   }
+
+   // 3. 効率比 ER (0.0: 完全ランダム/レンジ 〜 1.0: 完全トレンド)
+   double er = 0.0;
+   if(total_path > 1e-12)
+      er = net_change / total_path;
+   if(er > 1.0) er = 1.0;
+
+   // 4. 動的スケーリング (線形マッピング)
+   out_offset = offset_min + er * (offset_max - offset_min);
+   out_sigma  = sigma_min  + er * (sigma_max - sigma_min);
+}
+
+//+------------------------------------------------------------------+
+//| 単一MAの逐次計算ヘルパー (動的適応型ALMA対応)                    |
 //+------------------------------------------------------------------+
 double CalculateMaBar(const SingleMaConfig &cfg,
                      const int i,
                      const double &prices[],
-                     const double prev_ma)
+                     const double prev_ma,
+                     const double dyn_offset = -1.0,
+                     const double dyn_sigma = -1.0)
 {
   if(!cfg.enabled || i < cfg.window - 1)
      return EMPTY_VALUE;
@@ -331,9 +405,28 @@ double CalculateMaBar(const SingleMaConfig &cfg,
      }
      return ((prev_ma * (cfg.window - 1) + prices[i]) / (double)cfg.window);
   }
+  else if(cfg.type == TREND_MA_ALMA && dyn_offset >= 0.0 && dyn_sigma > 0.0)
+  {
+     // 動的適応型 ALMA 計算 (バー毎にガウス重みを動的生成)
+     double clpOffset = MathMin(MathMax(dyn_offset, 0.0), 1.0);
+     double m = (1.0 - clpOffset) * (double)(cfg.window - 1);
+     double s = (double)cfg.window / dyn_sigma;
+     double two_s_sq = 2.0 * s * s;
+
+     double sum = 0.0;
+     double sumW = 0.0;
+     for(int k = 0; k < cfg.window; k++)
+     {
+        double diff = (double)k - m;
+        double w = MathExp(-(diff * diff) / two_s_sq);
+        sum += prices[i - k] * w;
+        sumW += w;
+     }
+     return (sumW > 0.0) ? (sum / sumW) : prices[i];
+  }
   else
   {
-     // FIR型 (SMA, LWMA, ALMA)
+     // 固定 FIR型 (SMA, LWMA, 手動ALMA)
      double sum = 0.0;
      for(int k = 0; k < cfg.window; k++)
      {
@@ -379,14 +472,26 @@ int OnCalculate(const int rates_total,
         BufferSS[i] = rawPrice;
         BufferPreFiltered[i] = rawPrice;
 
+        // ALMA動的推定 (InpAlmaAutoAdaptive 有効時)
+        double dyn_offset = -1.0;
+        double dyn_sigma  = -1.0;
+        if(InpAlmaAutoAdaptive && (InpFastMaType == TREND_MA_ALMA || InpMidMaType == TREND_MA_ALMA || InpSlowMaType == TREND_MA_ALMA))
+        {
+           int eval_idx = (i == rates_total - 1 && i > 0) ? (i - 1) : i;
+           EstimateAdaptiveAlmaParams(eval_idx, BufferPreFiltered, InpAlmaRollingWindow,
+                                      InpAlmaOffsetMin, InpAlmaOffsetMax,
+                                      InpAlmaSigmaMin, InpAlmaSigmaMax,
+                                      dyn_offset, dyn_sigma);
+        }
+
         // 1. 移動平均計算 (Fast, Mid, Slow)
         double prevFast = (i > 0) ? BufferFast[i - 1] : EMPTY_VALUE;
         double prevMid  = (i > 0) ? BufferMid[i - 1]  : EMPTY_VALUE;
         double prevSlow = (i > 0) ? BufferSlow[i - 1] : EMPTY_VALUE;
 
-        BufferFast[i] = CalculateMaBar(m_cfgFast, i, BufferPreFiltered, prevFast);
-        BufferMid[i]  = CalculateMaBar(m_cfgMid,  i, BufferPreFiltered, prevMid);
-        BufferSlow[i] = CalculateMaBar(m_cfgSlow, i, BufferPreFiltered, prevSlow);
+        BufferFast[i] = CalculateMaBar(m_cfgFast, i, BufferPreFiltered, prevFast, dyn_offset, dyn_sigma);
+        BufferMid[i]  = CalculateMaBar(m_cfgMid,  i, BufferPreFiltered, prevMid,  dyn_offset, dyn_sigma);
+        BufferSlow[i] = CalculateMaBar(m_cfgSlow, i, BufferPreFiltered, prevSlow, dyn_offset, dyn_sigma);
 
         // 2. True Range & ATR 計算
         double tr = high[i] - low[i];
@@ -518,14 +623,26 @@ int OnCalculate(const int rates_total,
      g_tf_ss_cache[k] = rawPrice;
      g_tf_prefiltered_cache[k] = rawPrice;
 
+     // ALMA動的推定 (InpAlmaAutoAdaptive 有効時)
+     double dyn_offset = -1.0;
+     double dyn_sigma  = -1.0;
+     if(InpAlmaAutoAdaptive && (InpFastMaType == TREND_MA_ALMA || InpMidMaType == TREND_MA_ALMA || InpSlowMaType == TREND_MA_ALMA))
+     {
+        int eval_idx = (k == tf_rates_total - 1 && k > 0) ? (k - 1) : k;
+        EstimateAdaptiveAlmaParams(eval_idx, g_tf_prefiltered_cache, InpAlmaRollingWindow,
+                                   InpAlmaOffsetMin, InpAlmaOffsetMax,
+                                   InpAlmaSigmaMin, InpAlmaSigmaMax,
+                                   dyn_offset, dyn_sigma);
+     }
+
      // 1. 移動平均計算 (Fast, Mid, Slow)
      double prevFast = (k > 0) ? g_tf_fast_cache[k - 1] : EMPTY_VALUE;
      double prevMid  = (k > 0) ? g_tf_mid_cache[k - 1]  : EMPTY_VALUE;
      double prevSlow = (k > 0) ? g_tf_slow_cache[k - 1] : EMPTY_VALUE;
 
-     g_tf_fast_cache[k] = CalculateMaBar(m_cfgFast, k, g_tf_prefiltered_cache, prevFast);
-     g_tf_mid_cache[k]  = CalculateMaBar(m_cfgMid,  k, g_tf_prefiltered_cache, prevMid);
-     g_tf_slow_cache[k] = CalculateMaBar(m_cfgSlow, k, g_tf_prefiltered_cache, prevSlow);
+     g_tf_fast_cache[k] = CalculateMaBar(m_cfgFast, k, g_tf_prefiltered_cache, prevFast, dyn_offset, dyn_sigma);
+     g_tf_mid_cache[k]  = CalculateMaBar(m_cfgMid,  k, g_tf_prefiltered_cache, prevMid,  dyn_offset, dyn_sigma);
+     g_tf_slow_cache[k] = CalculateMaBar(m_cfgSlow, k, g_tf_prefiltered_cache, prevSlow, dyn_offset, dyn_sigma);
 
      // 2. True Range & ATR 計算
      double tr = g_tf_rates[k].high - g_tf_rates[k].low;

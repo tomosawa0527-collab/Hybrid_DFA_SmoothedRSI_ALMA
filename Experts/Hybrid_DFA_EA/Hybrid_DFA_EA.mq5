@@ -59,10 +59,16 @@ input ENUM_APPLIED_PRICE InpMaAppliedPrice = PRICE_CLOSE;                   // �
 
 //--- ALMA専用パラメータ (InpTrendMaType == TREND_MA_ALMA 時に有効)
 input group "--- ALMA 詳細設定 (InpTrendMaType=ALMA時) ---"
-input double InpAlmaFastOffset = 0.92;                                      // [ALMA] 短期 Offset (高値ほど低遅延)
-input double InpAlmaSlowOffset = 0.90;                                      // [ALMA] 長期 Offset (高値ほど低遅延)
-input double InpAlmaFastSigma = 5.5;                                        // [ALMA] 短期 Sigma
-input double InpAlmaSlowSigma = 5.5;                                        // [ALMA] 長期 Sigma
+input bool   InpAlmaAutoAdaptive    = true;                                      // [ALMA] パラメータ自動適応化 (動的推定)
+input int    InpAlmaRollingWindow   = 100;                                       // [ALMA] ローリング観測窓長 W (30〜250推奨)
+input double InpAlmaOffsetMin       = 0.70;                                      // [ALMA] 最小 Offset (レンジ相場用)
+input double InpAlmaOffsetMax       = 0.95;                                      // [ALMA] 最大 Offset (トレンド相場用)
+input double InpAlmaSigmaMin        = 4.5;                                       // [ALMA] 最小 Sigma (広帯域・強力平滑化)
+input double InpAlmaSigmaMax        = 7.5;                                       // [ALMA] 最大 Sigma (狭帯域・鋭敏追従)
+input double InpAlmaFastOffset      = 0.92;                                      // [ALMA] 手動時 短期 Offset (高値ほど低遅延)
+input double InpAlmaSlowOffset      = 0.90;                                      // [ALMA] 手動時 長期 Offset (高値ほど低遅延)
+input double InpAlmaFastSigma       = 5.5;                                       // [ALMA] 手動時 短期 Sigma
+input double InpAlmaSlowSigma       = 5.5;                                       // [ALMA] 手動時 長期 Sigma
 
 //--- 出口戦略 (ATR Risk Management)
 input group "=== 出口戦略 (ATR) ==="
@@ -196,8 +202,9 @@ int OnInit() {
         case TREND_MA_ALMA: maTypeName = "ALMA"; break;
         }
 
-        PrintFormat("[Hybrid_DFA_EA] トレンドMAハンドル生成開始: Type=%s, Fast=%d, Slow=%d, Price=%d",
-                    maTypeName, InpMaFastWindow, InpMaSlowWindow, (int)InpMaAppliedPrice);
+        PrintFormat("[Hybrid_DFA_EA] トレンドMAハンドル生成開始: Type=%s, Fast=%d, Slow=%d, Price=%d, ALMA_Adaptive=%s",
+                    maTypeName, InpMaFastWindow, InpMaSlowWindow, (int)InpMaAppliedPrice,
+                    InpAlmaAutoAdaptive ? "ON" : "OFF");
 
         h_multiDualMa =
             iCustom(_Symbol, _Period, "Hybrid_DFA_EA\\MultiTrendMA",
@@ -209,9 +216,18 @@ int OnInit() {
                     InpTrendMaType, InpMaSlowWindow,
                     InpMaAppliedPrice,
                     "=== ALMA 専用パラメータ ===",
-                    InpAlmaFastOffset, InpAlmaFastSigma,
-                    InpAlmaFastOffset, InpAlmaFastSigma,
-                    InpAlmaSlowOffset, InpAlmaSlowSigma);
+                    InpAlmaAutoAdaptive,
+                    InpAlmaRollingWindow,
+                    InpAlmaOffsetMin,
+                    InpAlmaOffsetMax,
+                    InpAlmaSigmaMin,
+                    InpAlmaSigmaMax,
+                    InpAlmaFastOffset,
+                    InpAlmaFastSigma,
+                    InpAlmaFastOffset, // Mid用ダミー
+                    InpAlmaFastSigma,  // Mid用ダミー
+                    InpAlmaSlowOffset,
+                    InpAlmaSlowSigma);
         if (h_multiDualMa == INVALID_HANDLE) {
             h_multiDualMa =
                 iCustom(_Symbol, _Period, "Indicators\\Hybrid_DFA_EA\\MultiTrendMA",
@@ -223,9 +239,18 @@ int OnInit() {
                         InpTrendMaType, InpMaSlowWindow,
                         InpMaAppliedPrice,
                         "=== ALMA 専用パラメータ ===",
-                        InpAlmaFastOffset, InpAlmaFastSigma,
-                        InpAlmaFastOffset, InpAlmaFastSigma,
-                        InpAlmaSlowOffset, InpAlmaSlowSigma);
+                        InpAlmaAutoAdaptive,
+                        InpAlmaRollingWindow,
+                        InpAlmaOffsetMin,
+                        InpAlmaOffsetMax,
+                        InpAlmaSigmaMin,
+                        InpAlmaSigmaMax,
+                        InpAlmaFastOffset,
+                        InpAlmaFastSigma,
+                        InpAlmaFastOffset, // Mid用ダミー
+                        InpAlmaFastSigma,  // Mid用ダミー
+                        InpAlmaSlowOffset,
+                        InpAlmaSlowSigma);
         }
         if (h_multiDualMa == INVALID_HANDLE) {
             Print("[Hybrid_DFA_EA] MultiTrendMA インディケータのハンドル取得に失敗しました。");
